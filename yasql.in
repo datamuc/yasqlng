@@ -1,0 +1,4669 @@
+#! /usr/bin/env perl
+# vim: set tabstop=2 smartindent shiftwidth=2 expandtab :
+#
+# Name: yasql - Yet Another SQL*Plus replacement
+#
+# See POD documentation at end
+#
+# $Id: yasql,v 1.83 2005/05/09 16:57:13 qzy Exp qzy $
+#
+# Copyright (C) 2000 Ephibian, Inc.
+# Copyright (C) 2005 iMind.dev, Inc.
+# 
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+#
+# Yasql was originally developed by Nathan Shafer at Ephibian, Inc.
+# Now it is mainly developed and maintained by Balint Kozman at iMind.dev, Inc.
+#
+# email: nshafer@ephibian.com
+# email: qzy@users.sourceforge.net
+#
+
+use strict;
+
+use SelfLoader;
+
+use DBI;
+use Term::ReadLine;
+use Data::Dumper;
+use Benchmark;
+use Getopt::Long;
+
+# Load DBD::Oracle early to work around SunOS bug. See
+# http://article.gmane.org/gmane.comp.lang.perl.modules.dbi.general/207
+#
+require DBD::Oracle;
+
+#Globals
+use vars qw(
+  $VERSION $Id $dbh $cursth @dbparams $dbuser $dbversion $term $term_type
+  $features $attribs $last_history $num_connects $connected $running_query
+  @completion_list @completion_possibles $completion_built $opt_host $opt_sid
+  $opt_port $opt_debug $opt_bench $opt_nocomp $opt_version $qbuffer
+  $last_qbuffer $fbuffer $last_fbuffer $quote $inquotes $inplsqlblock $increate
+  $incomment $csv_filehandle_open $csv_max_lines $nohires $notextcsv $csv
+  $sysconf $sysconfdir $quitting $sigintcaught %conf %prompt $prompt_length
+  @sqlpath %set $opt_batch $opt_notbatch $opt_headers
+);
+
+select((select(STDOUT), $| = 1)[0]); #unbuffer STDOUT
+
+$sysconfdir = "/etc";
+$sysconf = "$sysconfdir/yasql.conf";
+
+# try to include Time::HiRes for fine grained benchmarking
+eval q{
+  use Time::HiRes qw (gettimeofday tv_interval);
+};
+
+# try to include Text::CSV_XS for input and output of CSV data
+eval q{
+  use Text::CSV_XS;
+};
+if($@) {
+  $notextcsv = 1;
+}
+
+# install signal handlers
+sub setup_sigs {
+  $SIG{INT}  = \&sighandle;
+  $SIG{TSTP} = 'DEFAULT';
+  $SIG{TERM} = \&sighandle;
+}
+setup_sigs();
+
+# install a filter on the __WARN__ handler so that we can get rid of 
+# DBD::Oracle's stupid ORACLE_HOME warning.  It would warn even if we don't
+# connect using a TNS name, which doesn't require access to the ORACLE_HOME
+$SIG{__WARN__} = sub{
+  warn(@_) unless $_[0] =~ /environment variable not set!/;
+};
+
+# initialize the whole thing
+init();
+
+if($@) {
+  if(!$opt_batch) {
+    wrn("Time::HiRes not installed.  Please install if you want benchmark times "
+     ."to include milliseconds.");
+  }
+  $nohires = 1;
+}
+
+
+$connected = 1;
+
+# start the interface
+interface();
+
+# end
+
+################################################################################
+###########  non-self-loaded functions  ########################################
+
+sub BEGIN {
+  $Id = '$Id: yasql,v 1.83 2005/05/09 02:07:13 nshafer Exp nshafer $';
+  ($VERSION) = $Id =~ /Id: \S+ (\d+\.\d+)/;
+}
+
+sub argv_sort {
+  if($a =~ /^\@/ && $b !~ /^\@/) {
+    return 1;
+  } elsif($a !~ /^\@/ && $b =~ /^\@/) {
+    return -1;
+  } else {
+    return 0;
+  }
+}
+
+sub sighandle {
+  my($sig) = @_;
+  debugmsg(3, "sighandle called", @_);
+
+  $SIG{$sig} = \&sighandle;
+
+  if($sig =~ /INT|TERM|TSTP/) {
+    if($quitting) {
+      # then we've already started quitting and so we just try to force exit
+      # without the graceful quit
+      print STDERR "Attempting to force exit...\n";
+      exit();
+    }
+    
+    if($sigintcaught) {
+      # the user has alrady hit INT and so we now force an exit
+      print STDERR "Caught another SIG$sig\n";
+      quit(undef, 1);
+    } else {
+      $sigintcaught = 1;
+    }
+    
+    if($running_query) {
+      if(defined $cursth) {
+        print STDERR "Attempting to cancel query...\n";
+        debugmsg(1, "canceling statement handle");
+        my $ret = $cursth->cancel();
+        $cursth->finish;
+      }
+    } elsif(!$connected) {
+      quit();
+    
+      if(defined $cursth) {
+        print STDERR "Attempting to cancel query...\n";
+        debugmsg(1, "canceling statement handle");
+        my $ret = $cursth->cancel();
+        $cursth->finish;
+      }
+    }
+
+  } elsif($sig eq 'ALRM') {
+
+    if(defined $dbh) {
+      wrn("Connection lost (timeout: $conf{connection_timeout})");
+      quit(1);
+    } else {
+      err("Could not connect to database, timed out. (timeout: "
+         ."$conf{connection_timeout})");
+    }
+  }
+}
+
+sub END {
+  debugmsg(3, "END called", @_);
+
+  # save the history buffer
+  if($term_type && $term_type eq 'gnu' && $term->history_total_bytes()) {
+    debugmsg(1, "Writing history");
+    unless($term->WriteHistory($conf{history_file})) {
+      wrn("Could not write history file to $conf{history_file}.  "
+         ."History not saved");
+    }
+  }
+}
+
+################################################################################
+########### self-loaded functions ##############################################
+
+#__DATA__
+
+sub init {
+  # call GetOptions to parse the command line
+  my $opt_help;
+  Getopt::Long::Configure( qw(permute) );
+  $Getopt::Long::ignorecase = 0;
+  usage(1) unless GetOptions(
+        "debug|d:i"         => \$opt_debug,
+        "host|H=s"          => \$opt_host,
+        "port|p=s"          => \$opt_port,
+        "sid|s=s"           => \$opt_sid,
+        "help|h|?"          => \$opt_help,
+        "nocomp|A"          => \$opt_nocomp,
+        "bench|benchmark|b" => \$opt_bench,
+        "version|V"         => \$opt_version,
+        "batch|B"           => \$opt_batch,
+        "interactive|I"     => \$opt_notbatch,
+  );
+
+  # set opt_debug to 1 if it's defined, which means the user just put -d or
+  # --debug without an integer argument
+  $opt_debug = 1 if !$opt_debug && defined $opt_debug;
+
+  $opt_batch = 0 if $opt_notbatch;
+  
+  $opt_batch = 1 unless defined $opt_batch || -t STDIN;
+
+  debugmsg(3, "init called", @_);
+  # This reads the command line then initializes the DBI and Term::ReadLine
+  # packages
+
+  $sigintcaught = 0;
+  $completion_built = 0;
+
+  usage(1) if $opt_help;
+
+  # Output startup string
+  if(!$opt_batch) {
+    print STDERR "\n";
+    print STDERR "YASQL version $VERSION Copyright (c) 2000-2001 Ephibian, Inc, 2005 iMind.dev.\n";
+    print STDERR '$Id: yasql,v 1.83 2005/05/09 02:07:13 qzy Exp qzy $' . "\n";
+  }
+
+  if($opt_version) {
+    print STDERR "\n";
+    exit(0);
+  }
+
+  if(!$opt_batch) {
+    print STDERR "Please type 'help' for usage instructions\n";
+    print STDERR "\n";
+  }
+
+  # parse the config files.  We first look for ~/.yasqlrc, then
+  # /etc/yasql.conf
+  # first set up the defaults
+  %conf = (
+    connection_timeout      => 20,
+    max_connection_attempts => 3,
+    history_file            => '~/.yasql_history',
+    pager                   => '/bin/more',
+    auto_commit             => 0,
+    commit_on_exit          => 1,
+    long_trunc_ok           => 1,
+    long_read_len           => 80,
+    edit_history            => 1,
+    auto_complete           => 1,
+    extended_benchmarks     => 0,
+    prompt                  => '%U%H',
+    column_wildcards        => 0,
+    extended_complete_list  => 0,
+    command_complete_list   => 1,
+    sql_query_in_error      => 0,
+    nls_date_format         => 'YYYY-MM-DD HH24:MI:SS',
+    complete_tables         => 1,
+    complete_columns        => 1,
+    complete_objects        => 1,
+    fast_describe           => 1,
+    server_output           => 2000,
+  );
+
+  my $config_file;
+  if(-e "$ENV{HOME}/.yasqlrc") {
+    $config_file = "$ENV{HOME}/.yasqlrc";
+  } elsif(-e $sysconf) {
+    $config_file = $sysconf;
+  }
+  
+  if($config_file) {
+    debugmsg(2, "Reading config: $config_file");
+    open(CONFIG, "$config_file");
+    while(<CONFIG>) {
+      chomp;
+      s/#.*//;
+      s/^\s+//;
+      s/\s+$//;
+      next unless length;
+      my($var, $value) = split(/\s*=\s*/, $_, 2);
+      $var = 'auto_commit'    if $var eq 'AutoCommit';
+      $var = 'commit_on_exit' if $var eq 'CommitOnExit';
+      $var = 'long_trunc_ok'  if $var eq 'LongTruncOk';
+      $var = 'long_read_len'  if $var eq 'LongReadLen';
+      $conf{$var} = $value;
+      debugmsg(3, "Setting option [$var] to [$value]");
+    }
+  }
+
+  if (($conf{server_output} > 0) && ($conf{server_output} < 2000)) {
+    $conf{server_output} = 2000;
+  }
+  if ($conf{server_output} > 1000000) {
+    $conf{server_output} = 1000000;
+  }
+  
+  ($conf{history_file}) = glob($conf{history_file});
+
+  debugmsg(3,"Conf: [" . Dumper(\%conf) . "]");
+
+  # Create a Text::CSV object
+  unless($notextcsv) {
+    $csv = new Text::CSV_XS;
+  }
+
+  # Change the process name to just 'yasql' to somewhat help with security.
+  # This is not bullet proof, nor is it supported on all platforms.  Those that
+  # don't support this will just fail silently.
+  debugmsg(2, "Process name: $0");
+  $0 = 'yasql';
+
+  # Parse the SQLPATH environment variable if it exists
+  if($ENV{SQLPATH}) {
+    @sqlpath = split(/;/, $ENV{SQLPATH});
+  }
+
+  # If the user set the SID on the command line, we'll overwrite the 
+  # environment variable so that DBI sees it.
+  #print "Using SID $opt_sid\n" if $opt_sid;
+  $ENV{ORACLE_SID} = $opt_sid if $opt_sid;
+
+  # output info about the options given  
+  print STDERR "Debugging is on\n" if $opt_debug;
+  DBI->trace(1) if $opt_debug > 3;
+
+  # Extending on from Oracle's conventions, try and obtain an early indication
+  # of ora_session_mode from AS SYSOPER, AS SYSDBA options.  Be flexible :-)
+  my $ora_session_mode = 0;
+  my $osmp = '';
+  if (lc($ARGV[-2]) eq 'as') {
+    $ora_session_mode = 2 if lc($ARGV[-1]) eq 'sysdba';
+    $ora_session_mode = 4 if lc($ARGV[-1]) eq 'sysoper';
+    pop @ARGV;
+    pop @ARGV;
+  } elsif (lc($ARGV[1]) eq 'as') {
+    $ora_session_mode = 2 if lc($ARGV[2]) eq 'sysdba';
+    $ora_session_mode = 4 if lc($ARGV[2]) eq 'sysoper';
+    @ARGV = ($ARGV[0], @ARGV[3..$#ARGV]);
+  }
+
+  # set up DBI
+  if(@ARGV == 0) {
+    # nothing was provided
+    debugmsg(2, "No command line args were found");
+    $dbh = db_connect(1, $ora_session_mode);
+  } else {
+    debugmsg(2, "command line args found!");
+    debugmsg(2, @ARGV);
+    # an argument was given!
+
+    my $script = 0;
+    if(substr($ARGV[0], 0, 1) eq '@') {
+      # no logon string was given, must be a script
+      debugmsg(2, "Found: no logon, script name");
+      my($script_name, @script_params) = @ARGV;
+      $script = 1;
+
+      $dbh = db_connect(1, $ora_session_mode);
+
+      run_script($script_name);
+    } elsif(substr($ARGV[0], 0, 1) ne '@' && substr($ARGV[1], 0, 1) eq '@') {
+      # A logon string was given as well as a script file
+      debugmsg(2, "Found: login string, script name");
+      my($logon_string, $script_name, @script_params) = @ARGV;
+      $script = 1;
+
+      my($ora_session_mode2, $username, $password, $connect_string)
+        = parse_logon_string($logon_string);
+      $ora_session_mode = $ora_session_mode2 if $ora_session_mode2;
+      $dbh = db_connect(1, $ora_session_mode, $username, $password, $connect_string);
+
+      run_script($script_name);
+    } elsif(@ARGV == 1 && substr($ARGV[0], 0, 1) ne '@') {
+      # only a logon string was given
+      debugmsg(2, "Found: login string, no script name");
+      my($logon_string) = @ARGV;
+
+      my($ora_session_mode2, $username, $password, $connect_string)
+        = parse_logon_string($logon_string);
+      $ora_session_mode = $ora_session_mode2 if $ora_session_mode2;
+      $dbh = db_connect(1, $ora_session_mode, $username, $password, $connect_string);
+    } else {
+      usage(1);
+    }
+
+    if ($conf{server_output} > 0) {
+	$dbh->func( $conf{server_output}, 'dbms_output_enable' );
+	$set{serveroutput} = 1;
+    }
+
+    # Quit if one or more scripts were given on the command-line
+    quit(0) if $script;
+  }
+
+  if (!$opt_batch) {
+    setup_term() unless $term;
+  }
+
+  # set up the pager
+  $conf{pager} = $ENV{PAGER} if $ENV{PAGER};
+}
+
+sub setup_term {
+  # set up the Term::ReadLine
+  $term = new Term::ReadLine('YASQL');
+  $term->ornaments(0);
+  $term->MinLine(0);
+
+  debugmsg(1, "Using " . $term->ReadLine());
+
+  if($term->ReadLine eq 'Term::ReadLine::Gnu') {
+    # Term::ReadLine::Gnu specific setup
+    $term_type = 'gnu';
+
+    $attribs = $term->Attribs();
+    $features = $term->Features();
+
+    $term->stifle_history(500);
+    if($opt_debug >= 4) {
+      foreach(sort keys(%$attribs)) {
+        debugmsg(4,"[term-attrib] $_: $attribs->{$_}");
+      }
+      foreach(sort keys(%$features)) {
+        debugmsg(4,"[term-feature] $_: $features->{$_}");
+      }
+    }
+
+    # read in the ~/.yasql_history file
+    if(-e $conf{history_file}) {
+      unless($term->ReadHistory($conf{history_file})) {
+        wrn("Could not read $conf{history_file}.  History not restored");
+      }
+    } else {
+      print STDERR "Creating $conf{history_file} to store your command line history\n";
+      open(HISTORY, ">$conf{history_file}") 
+        or wrn("Could not create $conf{history_file}: $!");
+      close(HISTORY);
+    }
+
+    $last_history = $term->history_get($term->{history_length});
+
+    $attribs->{completion_entry_function} = \&complete_entry_function;
+    my $completer_word_break_characters
+      = $attribs->{completer_word_break_characters};
+    $completer_word_break_characters =~ s/[a-zA-Z0-9_\$\#]//g;
+    $attribs->{completer_word_break_characters}
+      = $completer_word_break_characters;
+    #$attribs->{catch_signals} = 0;
+  } elsif($term->ReadLine eq 'Term::ReadLine::Perl') {
+    # Term::ReadLine::Perl specific setup
+    $term_type = 'perl';
+    if($opt_debug >= 4) {
+      foreach(sort keys(%{$term->Features()})) {
+        debugmsg(4,"[term-feature] $_: $attribs->{$_}");
+      }
+    }
+    
+  }
+
+  if ($term->ReadLine eq 'Term::ReadLine::Stub') {
+    wrn("Neither Term::ReadLine::Gnu or Term::ReadLine::Perl are installed.\n"
+      . "Please install from CPAN for advanced functionality.  Until then "
+      . "YASQL will run\ncrippled. (like possibly not having command history "
+      . "or line editing...\n");
+  }
+}
+
+sub parse_logon_string {
+  debugmsg(3, "parse_logon_string called", @_);
+
+  my($arg) = @_;
+  my($ora_session_mode, $username, $password, $connect_string);
+  
+  # strip off AS SYSDBA / AS SYSOPER first
+  if($arg =~ /^(.*)\s+as\s+sys(\w+)\s*$/i) {
+    $ora_session_mode = 2 if lc($2) eq 'dba';
+    $ora_session_mode = 4 if lc($2) eq 'oper';
+    $arg = $1 if $ora_session_mode;
+    $ora_session_mode = 0 unless $ora_session_mode;
+  }
+  if($arg =~ /^\/$/) {
+    $username = '';
+    $password = '';
+    $connect_string = 'external';
+    return($ora_session_mode, $username, $password, $connect_string);
+  } elsif($arg eq 'internal') {
+    $username = '';
+    $password = '';
+    $connect_string = 'external';
+    $ora_session_mode = 2;
+    return($ora_session_mode, $username, $password, $connect_string);
+  } elsif($arg =~ /^([^\/]+)\/([^\@]+)\@(.*)$/) {
+    #username/password@connect_string
+    $username = $1;
+    $password = $2;
+    $connect_string = $3;
+    return($ora_session_mode, $username, $password, $connect_string);
+  } elsif($arg =~ /^([^\@]+)\@(.*)$/) {
+    # username@connect_string
+    $username = $1;
+    $password = '';
+    $connect_string = $2;
+    return($ora_session_mode, $username, $password, $connect_string);
+  } elsif($arg =~ /^([^\/]+)\/([^\@]+)$/) {
+    # username/password
+    $username = $1;
+    $password = $2;
+    $connect_string = '';
+    return($ora_session_mode, $username, $password, $connect_string);
+  } elsif($arg =~ /^([^\/\@]+)$/) {
+    # username
+    $username = $1;
+    $password = $2;
+    $connect_string = '';
+    return($ora_session_mode, $username, $password, $connect_string);
+  } elsif($arg =~ /^\@(.*)$/) {
+    # @connect_string
+    $username = '';
+    $password = '';
+    $connect_string = $1;
+    return($ora_session_mode, $username, $password, $connect_string);
+  } else {
+    return(undef,undef,undef,undef);
+  }
+}
+
+sub populate_completion_list {
+  my($inline_print, $current_table_name) = @_;
+  debugmsg(3, "populate_completion_list called", @_);
+
+  # grab all the table and column names and put them in @completion_list
+
+  if($inline_print) {
+    $| = 1;
+    print STDERR "...";
+  } else {
+    print STDERR "Generating auto-complete list...\n";
+  }
+  
+  if($conf{extended_complete_list}) {
+    my @queries;
+    if($conf{complete_tables}) {
+      push(@queries, 'select table_name from all_tables');
+    }
+    if($conf{complete_columns}) {
+      push(@queries, 'select column_name from all_tab_columns');
+    }
+    if($conf{complete_objects}) {
+      push(@queries, 'select object_name from all_objects');
+    }
+
+    my $sqlstr = join(' union ', @queries);
+    debugmsg(3, "query: [$sqlstr]");
+
+    my $sth = $dbh->prepare($sqlstr)
+      or query_err('prepare', $DBI::errstr, $sqlstr), setup_sigs(), return(0);
+    $sth->execute()
+      or query_err('execute', $DBI::errstr, $sqlstr), setup_sigs(), return(0);
+    while(my $res = $sth->fetchrow_array()) {
+      push(@completion_list, $res);
+    }
+  } else {
+    my @queries;
+    if($conf{complete_tables}) {
+      push(@queries, "select 'table-' || table_name from user_tables");
+    }
+    if($conf{complete_columns}) {
+      push(@queries, "select 'column-' || column_name from user_tab_columns");
+    }
+    if($conf{complete_objects}) {
+      push(@queries, "select 'object-' || object_name from user_objects");
+    }
+
+    my $sqlstr = join(' union ', @queries);
+    debugmsg(3, "query: [$sqlstr]");
+
+    my $sth = $dbh->prepare($sqlstr)
+      or query_err('prepare', $DBI::errstr, $sqlstr), setup_sigs(), return(0);
+    $sth->execute()
+      or query_err('execute', $DBI::errstr, $sqlstr), setup_sigs(), return(0);
+    while(my $res = $sth->fetchrow_array()) {
+      push(@completion_list, $res);
+    }
+  }
+
+  if ($conf{command_complete_list}) {
+    push(@completion_list, "command-create", "command-select", "command-insert", "command-update", "command-delete from", "command-from", "command-execute", "command-show", "command-describe", "command-drop");
+  }
+
+  if ($current_table_name) {
+
+    my @queries;
+    #@completion_list = ();
+    push(@queries, "select 'current_column-$current_table_name.' || column_name from user_tab_columns where table_name=\'".uc($current_table_name)."\'");
+
+    my $sqlstr = join(' union ', @queries);
+    debugmsg(3, "query: [$sqlstr]");
+
+    my $sth = $dbh->prepare($sqlstr)
+      or query_err('prepare', $DBI::errstr, $sqlstr), setup_sigs(), return(0);
+    $sth->execute()
+      or query_err('execute', $DBI::errstr, $sqlstr), setup_sigs(), return(0);
+    while(my $res = $sth->fetchrow_array()) {
+      push(@completion_list, $res);
+    }
+  }
+
+  setup_sigs();
+  
+  if($inline_print) {
+    print "\r";
+    print "[K";
+    $| = 0;
+    $term->forced_update_display();
+  }
+}
+
+sub complete_entry_function {
+  my($word, $state) = @_;
+  debugmsg(3, "complete_entry_function called", @_);
+  # This is called by Term::ReadLine::Gnu when a list of matches needs to
+  # be generated.  It takes a string that is the word to be completed and
+  # a state number, which should increment every time it's called.
+
+  return unless $connected;
+
+  my $line_buffer = $attribs->{line_buffer};
+  debugmsg(4, "line_buffer: [$line_buffer]");
+
+  if($line_buffer =~ /^\s*\@/) {
+    return($term->filename_completion_function(@_));
+  }
+
+  unless($completion_built) {
+    unless($opt_nocomp || !$conf{auto_complete}) {
+      populate_completion_list(1);
+    }
+    $completion_built = 1;
+  }
+
+  if($state == 0) {
+    # compute all the possibilies and put them in @completion_possibles
+    @completion_possibles = ();
+    my $last_char = substr($word,length($word)-1,1);
+
+    debugmsg(2,"last_char: [$last_char]");
+
+    my @grep = ();
+    if ($line_buffer =~ /select(?!.*(?:from|where))[\s\w\$\#_,]*\.[\w_]*$/) {
+      # This case is for "select mytable.mycolumn" type lines
+      my $current_table_name = $line_buffer;
+      $current_table_name =~ s/(select.*)(\s)([\w_]+)(\.)([\w_]*)$/$3/;
+      debugmsg(3, "current table name: $current_table_name");
+
+      unless($opt_nocomp || !$conf{auto_complete}) {
+        populate_completion_list(1, $current_table_name);
+      }
+
+      debugmsg(4, "select table.column");
+
+      push(@grep, '^current_column-');
+    } elsif($line_buffer =~ /select(?!.*(?:from|where))[\s\w\$\#_,]+$/) {
+      debugmsg(4, "select ...");
+      push(@grep, '^column-', '^table-');
+    } elsif($line_buffer =~ /from(?!.*where)[\s\w\$\#_,]*$/) {
+      debugmsg(4, "from ...");
+      push(@grep, '^table-');
+    } elsif($line_buffer =~ /where[\s\w\$\#_,]*$/) {
+      debugmsg(4, "where ...");
+      push(@grep, '^column-');
+    } elsif($line_buffer =~ /update(?!.*set)[\s\w\$\#_,]*$/) {
+      debugmsg(4, "where ...");
+      push(@grep, '^table-');
+    } elsif($line_buffer =~ /set[\s\w\$\#_,]*$/) {
+      debugmsg(4, "where ...");
+      push(@grep, '^column-');
+    } elsif($line_buffer =~ /insert.*into(?!.*values)[\s\w\$\#_,]*$/) {
+      debugmsg(4, "where ...");
+      push(@grep, '^table-');
+    } else {
+      push(@grep, '');
+    }
+    debugmsg(2,"grep: [@grep]");
+    
+    my $use_lower;
+    if($last_char =~ /^[A-Z]$/) {
+      $use_lower = 0;
+    } else {
+      $use_lower = 1;
+    }
+    foreach my $grep (@grep) {
+      foreach my $list_item (grep(/$grep/, @completion_list)) {
+        my $item = $list_item;
+        $item =~ s/^\w*-//;
+        eval { #Trap errors
+          if($item =~ /^\Q$word\E/i) {
+            push(@completion_possibles, 
+              ($use_lower ? lc($item) : uc($item))
+            );
+          }
+        };
+        debugmsg(2, "Trapped error in complete_entry_function eval: $@") if $@;
+      }
+    }
+    debugmsg(3,"possibles: [@completion_possibles]");
+  }
+
+  # return the '$state'th element of the possibles
+  return($completion_possibles[$state] || undef);
+}
+
+sub db_reconnect {
+  debugmsg(3, "db_reconnect called", @_);
+  # This first disconnects the database, then tries to reconnect
+
+  print "Reconnecting...\n";
+
+  commit_on_exit();
+
+  $dbh->disconnect() if defined $dbh;
+
+  $dbh = db_connect(1, @dbparams);
+}
+
+sub db_connect {
+  my($die_on_error, $ora_session_mode, $username, $password, $connect_string) = @_;
+  debugmsg(3, "db_connect called", @_);
+  # Tries to connect to the database, prompting for username and password
+  # if not given.  There are several cases that can happen:
+  #   connect_string is present:
+  #     ORACLE_HOME has to exist and the driver tries to make a connection to 
+  #     given connect_string.
+  #   connect_string is not present:
+  #     $opt_host is set:
+  #       Connect to $opt_host on $opt_sid. Specify port only if $opt_port is 
+  #       set
+  #     $opt_host is not set:
+  #       Try to make connection to the default database by not specifying any
+  #       host or connect string
+
+  my($dbhandle, $dberr, $dberrstr, $this_prompt_host, $this_prompt_user);
+
+  debugmsg(1,"ora_session_mode: [$ora_session_mode] username: [$username] password: [$password] connect_string: [$connect_string]");
+  
+  # The first thing we're going to check is that the Oracle DBD is available
+  # since it's a sorta required element =)
+  my @drivers = DBI->available_drivers();
+  my $found = 0;
+  foreach(@drivers) {
+    if($_ eq "Oracle") {
+      $found = 1;
+    }
+  }
+  unless($found) {
+    err("Could not find DBD::Oracle... please install.  Available drivers: "
+       .join(", ", @drivers) . ".\n");
+  }
+  #print "drivers: [" . join("|", @drivers) . "]\n";
+  
+  # Now we can attempt a connection to the database
+  my $attributes = {
+    RaiseError => 0, PrintError => 0, AutoCommit => $conf{auto_commit}, 
+    LongReadLen => $conf{long_read_len}, LongTruncOk => $conf{long_trunc_ok},
+    ora_session_mode => $ora_session_mode
+  };
+
+  if($connect_string eq 'external') {
+    # the user wants to connect with external authentication
+
+    check_oracle_home();
+    
+    # install alarm signal handle
+    $SIG{ALRM} = \&sighandle;
+    alarm($conf{connection_timeout});
+  
+    if(!$opt_batch) {
+      print "Attempting connection to local database\n";
+    }
+    $dbhandle = DBI->connect('dbi:Oracle:',undef,undef,$attributes)
+      or do {
+        $dberr = $DBI::err;
+        $dberrstr = $DBI::errstr;
+      };
+
+    $this_prompt_host = $ENV{ORACLE_SID};
+    $this_prompt_user = $ENV{LOGNAME};
+    alarm(0); # cancel alarm
+  } elsif($connect_string) {
+    # We were provided with a connect string, so we can use the TNS method
+
+    check_oracle_home();
+    ($ora_session_mode, $username, $password) = get_up($ora_session_mode, $username, $password);
+    $attributes->{ora_session_mode} = $ora_session_mode if $ora_session_mode;
+
+    my $userstring;
+    if($username) {
+      $userstring = $username . '@' . $connect_string;
+    } else {
+      $userstring = $connect_string;
+    }
+    
+    # install alarm signal handle
+    $SIG{ALRM} = \&sighandle;
+    alarm($conf{connection_timeout});
+  
+    if(!$opt_batch) {
+      print "Attempting connection to $userstring\n";
+    }
+    $dbhandle = DBI->connect('dbi:Oracle:',$userstring,$password,$attributes)
+      or do {
+        $dberr = $DBI::err;
+        $dberrstr = $DBI::errstr;
+      };
+
+    $this_prompt_host = $connect_string;
+    $this_prompt_user = $username;
+    alarm(0); # cancel alarm
+  } elsif($opt_host) {
+    # attempt a connection to $opt_host
+    my $dsn;
+    $dsn = "host=$opt_host";
+    $dsn .= ";sid=$opt_sid" if $opt_sid;
+    $dsn .= ";port=$opt_port" if $opt_port;
+
+    ($ora_session_mode, $username, $password) = get_up($ora_session_mode, $username, $password);
+    $attributes->{ora_session_mode} = $ora_session_mode if $ora_session_mode;
+
+    # install alarm signal handle
+    $SIG{ALRM} = \&sighandle;
+    alarm($conf{connection_timeout});
+  
+    print "Attempting connection to $opt_host\n";
+    debugmsg(1,"dsn: [$dsn]");
+    $dbhandle = DBI->connect("dbi:Oracle:$dsn",$username,$password,
+                             $attributes)
+      or do {
+        $dberr = $DBI::err;
+        $dberrstr = $DBI::errstr;
+      };
+
+    $this_prompt_host = $opt_host;
+    $this_prompt_host = "$opt_sid!" . $this_prompt_host if $opt_sid;
+    $prompt{user} = $username;
+    alarm(0); # cancel alarm
+  } else {
+    # attempt a connection without specifying a hostname or anything
+
+    check_oracle_home();
+    ($ora_session_mode, $username, $password) = get_up($ora_session_mode, $username, $password);
+    $attributes->{ora_session_mode} = $ora_session_mode if $ora_session_mode;
+
+    # install alarm signal handle
+    $SIG{ALRM} = \&sighandle;
+    alarm($conf{connection_timeout});
+  
+    print "Attempting connection to local database\n";
+    $dbhandle = DBI->connect('dbi:Oracle:',$username,$password,$attributes)
+      or do {
+        $dberr = $DBI::err;
+        $dberrstr = $DBI::errstr;
+      };
+
+    $this_prompt_host = $ENV{ORACLE_SID};
+    $this_prompt_user = $username;
+    alarm(0); # cancel alarm
+  }
+
+  if($dbhandle) {
+    # Save the parameters for reconnecting
+    @dbparams = ($ora_session_mode, $username, $password, $connect_string);
+
+    # set the $dbuser global for use elsewhere
+    $dbuser = $username;
+    $num_connects = 0;
+    $prompt{host} = $this_prompt_host;
+    $prompt{user} = $this_prompt_user;
+
+    # Get the version banner
+    debugmsg(2,"Fetching version banner");
+    my $banner = $dbhandle->selectrow_array(
+      "select banner from v\$version where banner like 'Oracle%'");
+    if(!$opt_batch) {
+      if($banner) {
+        print "Connected to: $banner\n\n";
+      } else {
+        print "Connection successful!\n";
+      }
+    }
+
+    if($banner =~ / (\d+)\.(\d+)\.([\d\.]+)/) {
+      my ($major, $minor, $other) = ($1, $2, $3);
+      $dbversion = $major || 8;
+    }
+
+    # Issue a warning about autocommit.  It's nice to know...
+    print STDERR "auto_commit is " . ($conf{auto_commit} ? "ON" : "OFF")
+        . ", commit_on_exit is " . ($conf{commit_on_exit} ? "ON" : "OFF")
+        . "\n" unless $opt_batch;
+  } elsif( ($dberr eq '1017' || $dberr eq '1005') 
+      && ++$num_connects < $conf{max_connection_attempts}) {
+    $dberrstr =~ s/ \(DBD ERROR: OCISessionBegin\).*//;
+    print "Error: $dberrstr\n\n";
+    #@dbparams = (0,undef,undef,$connect_string);
+    $connect_string = '' if $connect_string eq 'external';
+    $dbhandle = db_connect($die_on_error,$ora_session_mode,undef,undef,$connect_string);
+  } elsif($die_on_error) {
+    err("Could not connect to database: $dberrstr [$dberr]");
+  } else {
+    wrn("Could not connect to database: $dberrstr [$dberr]");
+    return(0);
+  }
+  
+  # set the NLS_DATE_FORMAT
+  if($conf{nls_date_format}) {
+    debugmsg(2, "setting NLS_DATE_FORMAT to $conf{nls_date_format}");
+    my $sqlstr = "alter session set nls_date_format = '"
+               . $conf{nls_date_format} . "'";
+    $dbhandle->do($sqlstr) or query_err('do', $DBI::errstr, $sqlstr);
+  }
+
+  $connected = 1;  
+  return($dbhandle);
+}
+
+sub get_prompt {
+  my($prompt_string) = @_;
+  debugmsg(3, "get_prompt called", @_);
+  # This returns a prompt.  It can be passed a string which will
+  # be manually put into the prompt.  It will be padded on the left with
+  # white space
+
+  $prompt_length ||= 5; #just in case normal prompt hasn't been outputted
+  debugmsg(2, "prompt_length: [$prompt_length]");
+  
+  if($prompt_string) {
+    my $temp_prompt = sprintf('%' . $prompt_length . 's', $prompt_string . '> ');
+    return($temp_prompt);
+  } else {
+    my $temp_prompt = $conf{prompt} . '> ';
+    my $temp_prompt_host = '@' . $prompt{host} if $prompt{host};
+    $temp_prompt =~ s/\%H/$temp_prompt_host/g;
+    $temp_prompt =~ s/\%U/$prompt{user}/g;
+    
+    $prompt_length = length($temp_prompt);
+    return($temp_prompt);
+  }
+}
+  
+sub get_up {
+  my($ora_session_mode, $username, $password) = @_;
+  debugmsg(3, "get_up called", @_);
+
+  if(!$opt_batch) {
+
+    setup_term() unless $term;
+
+    # Get username/password
+    unless($username) {
+      # prompt for the username
+      $username = $term->readline('Username: ');
+      if($username =~ /^(.*)\s+as\s+sys(\w+)\s*$/i) {
+        $ora_session_mode = 2 if lc($2) eq 'dba';
+        $ora_session_mode = 4 if lc($2) eq 'oper';
+        $username = $1;
+      }
+
+      # Take that entry off of the history list
+      if ($term_type eq 'gnu') {
+        $term->remove_history($term->where_history());
+      }
+    }
+
+    unless($password) {
+      # prompt for the password, and disable echo
+      my $orig_redisplay = $attribs->{redisplay_function};
+      $attribs->{redisplay_function} = \&shadow_redisplay;
+    
+      $password = $term->readline('Password: ');
+
+      $attribs->{redisplay_function} = $orig_redisplay;
+
+      # Take that entry off of the history list
+      if ($term->ReadLine eq "Term::ReadLine::Gnu") {
+        $term->remove_history($term->where_history());
+      }
+    }
+  }
+
+  return($ora_session_mode, $username, $password);
+
+}
+
+sub check_oracle_home {
+  # This checks for the ORACLE_HOME environment variable and dies if it's
+  # not set
+  err("Please set your ORACLE_HOME environment variable!") 
+    unless $ENV{ORACLE_HOME};
+  return(1);
+}
+
+sub shadow_redisplay {
+# The one provided in Term::ReadLine::Gnu was broken
+#  debugmsg(2, "shadow_redisplay called", @_);
+  my $OUT = $attribs->{outstream};
+  my $oldfh = select($OUT); $| = 1; select($oldfh);
+  print $OUT ("\r", $attribs->{prompt});
+  $oldfh = select($OUT); $| = 0; select($oldfh);
+}
+
+sub print_non_print {
+  my($string) = @_;
+
+  my @string = unpack("C*", $string);
+  my $ret_string;
+  foreach(@string) {
+    if($_ >= 40 && $_ <= 176) {
+      $ret_string .= chr($_);
+    } else {
+      $ret_string .= "<$_>";
+    }
+  }
+  return($ret_string);
+}
+
+sub interface {
+  debugmsg(3, "interface called", @_);
+  # this is the main program loop that handles all the user input.
+  my $input;
+  my $prompt = get_prompt();
+
+  setup_sigs();
+
+  # Check if we were interactively called, or do we need to process STDIN
+  if(-t STDIN) {
+    while(defined($input = $term->readline($prompt))) {
+      $sigintcaught = 0;
+      $prompt = process_input($input, $prompt) || get_prompt();
+      setup_sigs();
+    }
+  } else {
+    debugmsg(3, "non-interactive", @_);
+    debugmsg(3, "\$opt_batch=$opt_batch", @_);
+    debugmsg(3, "\$opt_batch=$opt_batch", @_);
+    # Send STDIN to process_input();
+    while(<STDIN>) {
+      process_input($_);
+    }
+  }
+
+  quit(0, undef, "\n");
+}
+
+sub process_input {
+  my($input, $prompt, $add_to_history) = @_;
+  if (!(defined($add_to_history))) {
+    $add_to_history = 1;
+  }
+  debugmsg(3, "process_input called", @_);
+
+  my $nprompt;
+  SWITCH: {
+    if(!$qbuffer) {
+      # Commands that are only allowed if there is no current buffer
+      $input =~ /^\s*(?:!|host)\s*(.*)\s*$/i and system($1),        last SWITCH;
+      $input =~ /^\s*\\a\s*$/i and populate_completion_list(),     last SWITCH;
+      $input =~ /^\s*\\\?\s*$/i and help(),                         last SWITCH;
+      $input =~ /^\s*help\s*$/i and help(),                         last SWITCH;
+      $input =~ /^\s*reconnect\s*$/i and db_reconnect(),            last SWITCH;
+      $input =~ /^\s*\\r\s*$/i and db_reconnect(),                 last SWITCH;
+      $input =~ /^\s*conn(?:ect)?\s+(.*)$/i and connect_cmd($1),    last SWITCH;
+      $input =~ /^\s*disc(?:onnect)\s*$/i and disconnect_cmd($1),   last SWITCH;
+      $input =~ /^\s*\@\S+\s*$/i and $nprompt = run_script($input), last SWITCH;
+      $input =~ /^\s*debug\s*(.*)$/i and debug_toggle($1),          last SWITCH;
+      $input =~ /^\s*autocommit\s*(.*)$/i and autocommit_toggle(),  last SWITCH;
+      $input =~ /^\s*commit/i and commit_cmd(),                     last SWITCH;
+      $input =~ /^\s*rollback/i and rollback_cmd(),                 last SWITCH;
+      $input =~ /^\s*(show\s*[^;\/\\]+)\s*$/i and show($1, 'table'),last SWITCH;
+      $input =~ /^\s*(desc\s*[^;\/\\]+)\s*$/i and describe($1, 'table'),
+                                                                    last SWITCH;
+      $input =~ /^\s*(set\s*[^;\/\\]+)\s*$/i and set_cmd($1),       last SWITCH;
+      $input =~ /^\s*exec(?:ute)?\s*(.*)\s*$/i and exec_cmd($1),    last SWITCH;
+      $input =~ /^\s*\\d\s*$/ and show('show objects', 'table'),    last SWITCH;
+      $input =~ /^\s*\\dt\s*$/ and show('show tables', 'table'),    last SWITCH;
+      $input =~ /^\s*\\di\s*$/ and show('show indexes', 'table'),   last SWITCH;
+      $input =~ /^\s*\\ds\s*$/ and show('show sequences', 'table'), last SWITCH;
+      $input =~ /^\s*\\dv\s*$/ and show('show views', 'table'),     last SWITCH;
+      $input =~ /^\s*\\df\s*$/ and show('show functions', 'table'), last SWITCH;
+    }
+    # Global commands allowed any time (even in the middle of queries)
+    $input =~ /^\s*quit\s*$/i and quit(0),                          last SWITCH;
+    $input =~ /^\s*exit\s*$/i and quit(0),                          last SWITCH;
+    $input =~ /^\s*\\q\s*$/i and quit(0),                          last SWITCH;
+    $input =~ /^\s*\\l\s*$/i and show_qbuffer(),                   last SWITCH;
+    $input =~ /^\s*\\p\s*$/i and show_qbuffer(),                   last SWITCH;
+    $input =~ /^\s*l\s*$/i and show_qbuffer(),                   last SWITCH;
+    $input =~ /^\s*list\s*$/i and show_qbuffer(),                   last SWITCH;
+    $input =~ /^\s*\\c\s*$/i and $nprompt = clear_qbuffer(),       last SWITCH;
+    $input =~ /^\s*clear\s*$/i and $nprompt = clear_qbuffer(),      last SWITCH;
+    $input =~ /^\s*clear buffer\s*$/i and $nprompt=clear_qbuffer(), last SWITCH;
+    $input =~ /^\s*\\e\s*(.*)$/i and $nprompt = edit($1),          last SWITCH;
+    $input =~ /^\s*edit\s*(.*)$/i and $nprompt = edit($1),          last SWITCH;
+    $input =~ /^\s*rem(?:ark)?/i and $input = '',                   last SWITCH;
+    $input =~ /[^\s]/ and $nprompt = parse_input($input) || last,   last SWITCH;
+
+    # default
+    $nprompt = $prompt if ($nprompt eq ''); # use last prompt if nothing caught (blank line)
+  }
+  if(!$opt_batch && $term->ReadLine eq "Term::ReadLine::Gnu" && $input =~ /[^\s]/ &&
+      $input ne $last_history) {
+    if (!$opt_batch && $add_to_history) {
+	$term->AddHistory($input);
+    }
+  }
+  $last_history = $input;
+  return($nprompt);
+}
+
+sub parse_input {
+  my($input) = @_;
+  debugmsg(3, "parse_input called", @_);
+  # this takes input and parses it.  It looks for single quotes (') and double
+  # quotes (") and presents prompts accordingly.  It also looks for query 
+  # terminators, such as semicolon (;), forward-slash (/) and back-slash-g (\g).
+  # If it finds a query terminator, then it pushes any text onto the query
+  # buffer ($qbuffer) and then passes the entire query buffer, as well as the
+  # format type, determined by the terminator type, to the query() function.  It
+  # also wipes out the qbuffer at this time.
+  #
+  # It returns a prompt (like 'SQL> ' or '  -> ') if successfull, 0 otherwise
+  
+  # now we need to check for a terminator, if we're not inquotes
+  while( $input =~ m/
+                     (                             #
+                       ['"]                        # match quotes
+                        |                          #  or
+                       ;                           # the ';' terminator
+                        |                          #  or
+                       ^\s*\/\s*$                  # the slash terminator at end of string
+                        |                          #  or
+                       \\[GgsSi]                   # one of the complex terminators
+                        |                          #  or
+                       (?:^|\s+)create\s+          # create
+                        |                          #  or
+                       (?:^|\s+)function\s+        # function
+                	|                          #  or
+                       (?:^|\s+)package\s+         # package
+                	|                          #  or
+                       (?:^|\s+)package\s+body\s+  # package body
+                        |                          #  or
+                       (?:^|\s+)procedure\s+       # procedure
+                        |                          #  or
+                       (?:^|\s+)trigger\s+         # trigger
+                        |                          #  or
+                       (?:^|\s+)declare\s+         # declare
+                        |                          #  or
+                       (?:^|\s+)begin\s+           # begin
+                        |                          #  or
+                       \/\*                        # start of multiline comment
+                        |                          #  or
+                       \*\/                        # end of multiline comment
+                     )/gix )
+  {
+
+    my($pre, $match, $post) = ($`, $1, $'); 
+    # PREMATCH, MATCH, POSTMATCH
+    debugmsg(1, "parse: [$pre] [$match] [$post]");
+
+    if( ($match eq '\'' || $match eq '"')) {
+      if(!$quote || $quote eq $match) {
+        $inquotes = ($inquotes ? 0 : 1);
+        if($inquotes) {
+          $quote = $match;
+        } else {
+          undef($quote);
+        }
+      }
+    } elsif($match =~ /create/ix) {
+      $increate = 1;
+    } elsif(!$increate &&
+            $match =~ /function|package|package\s+body|procedure|trigger/ix)
+    {
+      # do nothing if we're not in a create statement
+    } elsif(($match =~ /declare|begin/ix) ||
+	    ($increate && $match =~ /function|package|package\s+body|procedure|trigger/ix))
+    {
+      $inplsqlblock = 1;
+    } elsif($match =~ /^\/\*/) {
+      $incomment = 1;
+    } elsif($match =~ /^\*\//) {
+      $incomment = 0;
+    } elsif(!$inquotes && !$incomment && $match !~ /^--/ &&
+           ($match =~ /^\s*\/\s*$/ || !$inplsqlblock))
+    {
+      $qbuffer .= $pre;
+      debugmsg(4,"qbuffer IN: [$qbuffer]");
+      my $terminator = $match;
+      $post =~ / (\d*)             # Match num_rows right after terminitor
+                 \s*               # Optional whitespace
+                 (?:               #
+                   ( >{1,2}|<|\| ) # Match redirection operators
+                   \s*             # Optional whitespace
+                   ( .* )          # The redirector (include rest of line)
+                 )?                # Match 0 or 1
+                 \s*               # Optional whitespace
+                 (.*)              # Catch everything else
+                 $                 # End-Of-Line
+               /x;
+      debugmsg(3,"1: [$1] 2: [$2] 3: [$3] 4: [$4]");
+
+      my($num_rows,$op,$op_text,$extra) = ($1,$2,$3,$4);
+
+      if($extra =~ /--.*$/) {
+        undef $extra;
+      }
+
+      # check that Text::CSV_XS is installed if a < redirection was given
+      if($op eq '<' && $notextcsv) {
+        soft_err("You must install Text::CSV_XS from CPAN to use this feature");
+        return(0);
+      }
+
+      # deduce the format from the terminator type
+      my $format;
+
+      $fbuffer = $terminator;
+
+      if($terminator eq ';' || $terminator =~ /^\/\s*$/) {
+        $format = 'table';
+      } elsif($terminator eq '\g') {
+        $format = 'list';
+      } elsif($terminator eq '\G') {
+        $format = 'list_aligned';
+      } elsif($terminator eq '\s') {
+        $format = 'csv';
+      } elsif($terminator eq '\S') {
+        $format = 'csv_no_header';
+      } elsif($terminator eq '\i') {
+	$format = 'sql';
+      }
+      $num_rows ||= 0;
+
+      debugmsg(4,"fbuffer: [$fbuffer]\n");
+
+      # if there is nothing in the buffer, then we assume that the user just 
+      # wants to reexecute the last query, which we have saved in $last_qbuffer
+      my($use_buffer, $copy_buffer);
+      if($qbuffer) {
+        $use_buffer = $qbuffer;
+        $copy_buffer = 1;
+      } elsif($last_qbuffer) {
+        $use_buffer = $last_qbuffer;
+        $copy_buffer = 0;
+      } else {
+        $use_buffer = undef;
+        $copy_buffer = 0;
+      }
+
+      if($use_buffer) {
+        if($op eq '<') {
+          my $count = 0;
+          my($max_lines, @params, $max_lines_save, @querybench,
+             $rows_affected, $success_code);
+          my $result_output = 1;
+          push(@querybench, get_bench());
+          print STDERR "\n";
+          while(($max_lines, @params) = get_csv_file($op, $op_text)) {
+            $max_lines_save = $max_lines;
+            print statusline($count, $max_lines);
+            
+            my @res = query( $use_buffer, $format,
+              {num_rows => $num_rows, op => $op, op_text => $op_text, 
+              result_output => 0}, @params);
+
+            debugmsg(3, "res: [@res]");
+
+            unless(@res) {
+              print "Error in line " . ($count + 1) . " of file '$op_text'\n";
+              $result_output = 0;
+              close_csv();
+              last;
+            }
+
+            $rows_affected += $res[0];
+            $success_code = $res[1];
+            $count++;
+          }
+          push(@querybench, get_bench());
+
+          if($result_output) {
+            print "\r[K";
+
+            if(!$opt_batch) {
+              print STDERR format_affected($rows_affected, $success_code);
+              if($opt_bench || $conf{extended_benchmarks}) {
+                print STDERR "\n\n";
+                print STDERR ('-' x 80);
+                print STDERR "\n";
+                output_benchmark("Query: ", @querybench, "\n");
+              } else {
+                output_benchmark(" (", @querybench, ")");
+                print STDERR "\n";
+              }
+              print STDERR "\n";
+            }
+          }
+        } else {
+          query($use_buffer, $format, {num_rows => $num_rows, op => $op,
+                                       op_text => $op_text});
+        }
+
+        if($copy_buffer) {
+          # copy the current qbuffer to old_qbuffer
+          $last_qbuffer = $qbuffer;
+          $last_fbuffer = $fbuffer;
+        }
+      } else {
+        query_err('Query', 'No current query in buffer');
+      }
+
+      undef($qbuffer);
+      undef($fbuffer);
+      $inplsqlblock = 0;
+      $increate = 0;
+
+      if($extra) {
+        return(parse_input($extra));
+      } else {
+        # return a 'new' prompt
+        return(get_prompt());
+      }
+    }
+  }
+
+  $qbuffer .= $input . "\n";
+
+  debugmsg(4,"qbuffer: [$qbuffer], input: [$input]");
+
+  if($inquotes) {
+    return(get_prompt($quote));
+  } elsif($incomment) {
+    return(get_prompt('DOC'));
+  } else {
+    return(get_prompt('-'));
+  }
+}
+
+sub get_csv_file {
+  my($op, $op_text) = @_;
+  debugmsg(3, "get_csv_file called", @_);
+
+  my @ret = ();
+
+  unless($csv_max_lines) {
+    ($op_text) = glob($op_text);
+    debugmsg(3, "Opening file '$op_text' for line counting");
+    open(CSV, $op_text) || do{
+      query_err('redirect',"Cannot open file '$op_text' for reading: $!");
+      return();
+    };
+    while(<CSV>) {
+      $csv_max_lines++;
+    }
+    close(CSV);
+  }
+
+  unless($csv_filehandle_open) {
+    ($op_text) = glob($op_text);
+    debugmsg(3, "Opening file '$op_text' for input");
+    open(CSV, $op_text) || do{
+      query_err('redirect',"Cannot open file '$op_text' for reading: $!");
+      return();
+    };
+    $csv_filehandle_open = 1;
+  }
+
+  my $line = <CSV>;
+  while(defined($line) && $line =~ /^\s*$/) {  
+    $line = <CSV>;
+  }
+  
+  unless($line) {
+    close_csv();
+    return();
+  }
+
+  debugmsg(3, "read in CSV line", $line);
+
+  my @fields;
+  if($csv->parse($line)) {
+    @fields = $csv->fields();
+    debugmsg(3, "got CVS fields", @fields);
+  } else {
+    wrn("Parse of CSV file failed on argument, skipping to next: "
+      . $csv->error_input());
+    return(get_csv_file($op, $op_text));
+  }
+
+  return($csv_max_lines, @fields);
+}
+
+sub close_csv {
+  close(CSV) || err("Could not close CSV filehandle: $!");
+  $csv_filehandle_open = 0;
+  $csv_max_lines = 0;
+}
+
+sub connect_cmd {
+  my($arg) = @_;
+  debugmsg(3, "connect_cmd called", @_);
+
+  unless($arg) {
+    wrn("Invalid connect syntax.  See help");
+    return(0);
+  }
+
+  my($ora_session_mode, $username, $password, $connect_string) = parse_logon_string($arg);
+  
+  my $new_dbh = db_connect(0, $ora_session_mode, $username, $password, $connect_string);
+  if($new_dbh) {
+    print "Closing last connection...\n";
+    commit_on_exit();
+
+    $dbh->disconnect() if defined $dbh;
+    $dbh = $new_dbh;
+    $connected = 1;
+  }
+  
+}
+
+sub disconnect_cmd {
+  debugmsg(3, "disconnect_cmd called", @_);
+
+  if ($connected) {
+    print "Closing last connection...\n";
+    commit_on_exit();
+
+    $dbh->disconnect() if (defined $dbh);
+    $connected = 0;
+  } else {
+    print "Not connected.\n";
+  }
+}
+
+sub commit_cmd {
+  debugmsg(3, "commit_cmd called", @_);
+  # this just called commit
+
+  if(defined $dbh) {
+    if($dbh->{AutoCommit}) {
+      wrn("commit ineffective with AutoCommit enabled");
+    } else {
+      $dbh->commit();
+      print "Transaction committed\n";
+    }
+  } else {
+    print "No connection\n";
+  }
+}
+
+sub rollback_cmd {
+  debugmsg(3, "rollback_cmd called", @_);
+  # this just called commit
+
+  if(defined $dbh) {
+    if($dbh->{AutoCommit}) {
+      wrn("rollback ineffective with AutoCommit enabled");
+    } else {
+      $dbh->rollback();
+      print "Transaction rolled back\n";
+    }
+  } else {
+    print "No connection\n";
+  }
+}
+
+sub exec_cmd {
+  my($sqlstr) = @_;
+  debugmsg(3, "exec_cmd called", @_);
+  # Wrap the statement in BEGIN/END and execute
+
+  $sqlstr = qq(
+    BEGIN
+      $sqlstr
+    END;
+  );
+
+  query($sqlstr, 'table');
+}
+
+sub edit {
+  my($filename) = @_;
+  debugmsg(3, "edit called", @_);
+  # This writes the current qbuffer to a file then opens up an editor on that 
+  # file... when the editor returns, we read in the file and overwrite the 
+  # qbuffer with it.  If there is nothing in the qbuffer, and there is
+  # something in the last_qbuffer, then we use the last_qbuffer.  If nothing
+  # is in either, then we just open the editor with a blank file.
+
+  my $passed_file = 1 if $filename;
+  my $filecontents;
+  my $prompt = get_prompt();
+
+  debugmsg(2, "passed_file: [$passed_file]");
+
+  if($qbuffer) {
+    debugmsg(2, "Using current qbuffer for contents");
+    $filecontents = $qbuffer;
+  } elsif($last_qbuffer) {
+    debugmsg(2, "Using last_qbuffer for contents");
+    $filecontents = $last_qbuffer . $last_fbuffer;
+  } else {
+    debugmsg(2, "Using blank contents");
+    $filecontents = "";
+  }
+
+  debugmsg(3, "filecontents: [$filecontents]");
+
+  # determine the tmp directory
+  my $tmpdir;
+  if($ENV{TMP}) {
+    $tmpdir = $ENV{TMP};
+  } elsif($ENV{TEMP}) {
+    $tmpdir = $ENV{TEMP};
+  } elsif(-d "/tmp") {
+    $tmpdir = "/tmp";
+  } else {
+    $tmpdir = ".";
+  }
+
+  # determine the preferred editor
+  my $editor;
+  if($ENV{EDITOR}) {
+    $editor = $ENV{EDITOR};
+  } else {
+    $editor = "vi";
+  }
+
+  # create the filename, if not given one
+  $filename ||= "$tmpdir/yasql_" . int(rand(1000)) . "_$$.sql";
+
+  # expand the filename
+  ($filename) = glob($filename);
+
+  debugmsg(1, "Editing $filename with $editor");
+
+  # check for file existance.  If it exists, then we open it up but don't
+  # write the buffer to it
+  my $file_exists;
+  if($passed_file) {
+    # if the file was passed, then check for it's existance
+    if(-e $filename) {
+      # The file was found
+      $file_exists = 1;
+    } elsif(-e "$filename.sql") {
+      # the file was found with a .sql extension
+      $filename = "$filename.sql";
+      $file_exists = 1;
+    } else {
+      wrn("$filename was not found, creating new file, which will not be ".
+          "deleted");
+    }
+  } else {
+    # no file was specified, so just write to the the temp file, and we
+    # don't care if it exists, since there's no way another process could
+    # write to the same file at the same time since we use the PID in the
+    # filename.
+    my $ret = open(TMPFILE, ">$filename");
+    if(!$ret) { #if file was NOT opened successfully
+      wrn("Could not write to $filename: $!");
+    } else {
+      print TMPFILE $filecontents;
+      close(TMPFILE);
+    }
+  }
+
+  # now spawn the editor
+  my($ret, @filecontents);
+  debugmsg(2, "Executing $editor $filename");
+  $ret = system($editor, "$filename");
+  if($ret) {
+    debugmsg(2, "Executing env $editor $filename");
+    $ret = system("env", $editor, "$filename");
+  }
+  if($ret) {
+    debugmsg(2, "Executing `which $editor` $filename");
+    $ret = system("`which $editor`", "$filename");
+  }
+
+  if($ret) { #if the editor or system returned a positive return value
+    wrn("Editor exited with $ret: $!");
+  } else {
+    # read in the tmp file and apply it's contents to the buffer
+    my $ret = open(TMPFILE, "$filename");
+    if(!$ret) { # if file was NOT opened successfully
+      wrn("Could not read $filename: $!");
+    } else {
+      # delete our qbuffer and reset the inquotes var
+      $qbuffer = "";
+      $inquotes = 0;
+      $increate = 0;
+      $inplsqlblock = 0;
+      $incomment = 0;
+      while(<TMPFILE>) {
+        push(@filecontents, $_);
+      }
+      close(TMPFILE);
+    }
+  }
+
+  if(@filecontents) {
+    print "\n";
+    print join('', @filecontents);
+    print "\n";
+
+    foreach my $line (@filecontents) {
+      # chomp off newlines
+      chomp($line);
+      
+      last if $sigintcaught;
+      # now send it in to process_input
+      # and don't add lines of the script to command history
+      $prompt = process_input($line, '', 0);
+    }
+  }
+
+  unless($passed_file) {
+    # delete the tmp file
+    debugmsg(1, "Deleting $filename");
+    unlink("$filename") ||
+      wrn("Could not unlink $filename: $!");
+  }
+
+  return($prompt);
+}
+
+sub run_script {
+  my($input) = @_;
+  debugmsg(3, "run_script called", @_);
+  # This reads in the given script and executes it's lines as if they were typed
+  # in directly.  It will NOT erase the current buffer before it runs.  It
+  # will append the contents of the file to the current buffer, basicly
+
+  my $prompt;
+
+  # parse input
+  $input =~ /^\@(.*)$/;
+  my $file = $1;
+  ($file) = glob($file);
+  debugmsg(2, "globbed [$file]");
+
+  my $first_char = substr($file, 0, 1);
+  unless($first_char eq '/' or $first_char eq '.') {
+    foreach my $path ('.', @sqlpath) {
+      if(-e "$path/$file") {
+        $file = "$path/$file";
+        last;
+      } elsif(-e "$path/$file.sql") {
+        $file = "$path/$file.sql";
+        last;
+      }
+    }
+  }
+  debugmsg(2, "Found [$file]");
+
+  # read in the tmp file and apply it's contents to the buffer
+  my $ret = open(SCRIPT, $file);
+  if(!$ret) { # if file was NOT opened successfully
+    wrn("Could not read $file: $!");
+    $prompt = get_prompt();
+  } else {
+    # read in the script
+    while(<SCRIPT>) {
+      # chomp off newlines
+      chomp;
+
+      last if $sigintcaught;
+      
+      # now send it in to process_input 
+      # and don't add lines of the script to command history
+      $prompt = process_input($_, '', 0);
+    }
+    close(SCRIPT);
+  }
+
+  return($prompt);
+}
+
+sub show_qbuffer {
+  debugmsg(3, "show_qbuffer called", @_);
+  # This outputs the current buffer
+
+  #print "\nBuffer:\n";
+  if($qbuffer) {
+    print $qbuffer;
+  } else {
+    print STDERR "Buffer empty";
+  }
+  print "\n";
+}
+
+sub clear_qbuffer {
+  debugmsg(3, "clear_qbuffer called", @_);
+  # This clears the current buffer
+
+  $qbuffer = '';
+  $inquotes = 0;
+  $inplsqlblock = 0;
+  $increate = 0;
+  $incomment = 0;
+  print "Buffer cleared\n";
+  return(get_prompt());
+}
+
+sub debug_toggle {
+  my($debuglevel) = @_;
+  debugmsg(3, "debug_toggle called", @_);
+  # If nothing is passed, then debugging is turned off if on, on if off.  If
+  # a number is passed, then we explicitly set debugging to that number
+
+
+  if(length($debuglevel) > 0) {
+    unless($debuglevel =~ /^\d+$/) {
+      wrn('Debug level must be an integer');
+      return(1);
+    }
+
+    $opt_debug = $debuglevel;
+  } else {
+    if($opt_debug) {
+      $opt_debug = 0;
+    } else {
+      $opt_debug = 1;
+    }
+  }
+  $opt_debug > 3 ? DBI->trace(1) : DBI->trace(0);
+  print "** debug is now " . ($opt_debug ? "level $opt_debug" : 'off') . "\n";
+}
+
+sub autocommit_toggle {
+  debugmsg(3, "autocommit_toggle called", @_);
+  # autocommit is turned off if on on if off
+
+  if($dbh->{AutoCommit}) {
+    $dbh->{AutoCommit} = 0;
+  } else {
+    $dbh->{AutoCommit} = 1;
+  }
+
+  print "AutoCommit is now " . ($dbh->{AutoCommit} ? 'on' : 'off') . "\n";
+}
+
+sub show {
+  my($input, $format, $num_rows, $op, $op_text) = @_;
+  debugmsg(3, "show called", @_);
+  # Can 'show thing'.  Possible things:
+  #   tables    - outputs all of the tables that the current user owns
+  #   sequences - outputs all of the sequences that the current user owns
+  #   
+  # Can also 'show thing on table'.  Possible things:
+  #   constraints - Shows constraints on the 'table', like Check, Primary Key, 
+  #                 Unique, and Foreign Key
+  #   indexes     - Shows indexes on the 'table'
+  #   triggers    - Shows triggers on the 'table'
+
+  # convert to lowercase for comparison operations
+  $input = lc($input);
+
+  # parse the input to find out what 'thing' has been requested
+  if($input =~ /^\s*show\s+([a-zA-Z0-9_\$\#\s]+)\s+(?:on|for)\s+([a-zA-Z0-9_\$\#]+)/) {
+    # this is a thing on a table
+    if($1 eq 'indexes') {
+      my $sqlstr;
+      if($dbversion >= 8) {
+        $sqlstr = q{
+          select ai.index_name "Index Name",
+            ai.index_type "Type",
+            ai.uniqueness "Unique?",
+            aic.column_name "Column Name"
+          from all_indexes ai, all_ind_columns aic
+          where ai.index_name = aic.index_name
+            and ai.table_owner = aic.table_owner
+            and ai.table_name = ?
+            and ai.table_owner = ?
+          order by ai.index_name, aic.column_position
+        };
+      } else {
+        $sqlstr = q{
+          select ai.index_name "Index Name",
+            ai.uniqueness "Unique?",
+            aic.column_name "Column Name"
+          from all_indexes ai, all_ind_columns aic
+          where ai.index_name = aic.index_name
+            and ai.table_owner = aic.table_owner
+            and ai.table_name = ?
+            and ai.table_owner = ?
+          order by ai.index_name, aic.column_position
+        };
+      }
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text}, uc($2), uc($dbuser));
+    } elsif($1 eq 'constraints') {
+      my $sqlstr = q{
+        select constraint_name "Constraint Name",
+          decode(constraint_type, 
+            'C', 'Check', 
+            'P', 'Primary Key', 
+            'R', 'Foreign Key', 
+            'U', 'Unique', 
+            '') "Type",
+            search_condition "Search Condition"
+        from all_constraints
+        where table_name = ?
+          and owner = ?
+        order by constraint_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text}, uc($2), uc($dbuser));
+    } elsif($1 eq 'keys') {
+      my $sqlstr = q{
+        select ac.constraint_name "Name", 
+               decode(ac.constraint_type, 
+                 'R', 'Foreign Key',
+                 'U', 'Unique',
+                 'P', 'Primary Key',
+                 ac.constraint_type) "Type",
+               ac.table_name "Table Name", 
+               acc.column_name "Column", 
+               r_ac.table_name "Parent Table", 
+               r_acc.column_name "Parent Column"
+          from all_constraints ac, all_cons_columns acc,
+               all_constraints r_ac, all_cons_columns r_acc
+         where ac.constraint_name = acc.constraint_name
+           and ac.owner = acc.owner
+           and ac.constraint_type in ('R','U','P')
+           and ac.r_constraint_name = r_ac.constraint_name(+)
+           and r_ac.constraint_name = r_acc.constraint_name(+)
+           and r_ac.owner = r_acc.owner(+)
+           and ac.table_name = ?
+           and ac.owner = ?
+         order by ac.constraint_name, acc.position
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text}, uc($2), uc($dbuser));
+    } elsif($1 eq 'checks') {
+      my $sqlstr = q{
+        select ac.constraint_name "Name", 
+               decode(ac.constraint_type, 
+                 'C', 'Check',
+                 ac.constraint_type) "Type",
+               ac.table_name "Table Name", 
+               ac.search_condition "Search Condition"
+          from all_constraints ac
+         where ac.table_name = ?
+           and ac.constraint_type = 'C'
+           and ac.owner = ?
+         order by ac.constraint_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text}, uc($2), uc($dbuser));
+    } elsif($1 eq 'triggers') {
+      my $sqlstr = q{
+        select trigger_name "Trigger Name",
+          trigger_type "Type",
+          when_clause "When",
+          triggering_event "Event"
+        from all_triggers 
+        where table_name = ?
+          and owner = ?
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text}, uc($2), uc($dbuser));
+    } elsif($1 eq 'query') {
+      my $sqlstr = q{
+        select count(*) from all_mviews where mview_name = ? and owner = ?
+      };
+      my $is_mview = $dbh->selectrow_array($sqlstr, undef, uc($2), uc($dbuser));
+      if($is_mview) {
+        $sqlstr = q{
+          select query
+            from all_mviews
+           where mview_name = ?
+             and owner = ?
+        };
+      } else {
+        $sqlstr = q{
+          select text
+            from all_views
+           where view_name = ?
+             and owner = ?
+        };
+      }
+      my $prev_LongReadLen = $dbh->{LongReadLen};
+      $dbh->{LongReadLen} = 8000;
+      query($sqlstr, 'single_output', {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text}, uc($2), uc($dbuser));
+      $dbh->{LongReadLen} = $prev_LongReadLen;
+    } else {
+      query_err("show", "Unsupported show type", $input);
+    }
+  } elsif($input =~ /^\s*show\s+all\s+([a-zA-Z0-9_\$\#\s]+)\s*$/) {
+    if($1 eq 'tables') {
+      my $sqlstr = q{
+        select table_name "Table Name", 'TABLE' "Type", owner "Owner"
+        from all_tables
+        order by table_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
+                               op_text => $op_text});
+    } elsif($1 eq 'views') {
+      my $sqlstr = q{
+        select view_name "View Name", 'VIEW' "Type", owner "Owner"
+        from all_views
+        order by view_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'objects') {
+      my $sqlstr = q{
+        select object_name "Object Name", object_type "Type", owner "Owner"
+        from all_objects
+        order by object_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'sequences') {
+      my $sqlstr = q{
+        select sequence_name "Sequence Name", 'SEQUENCE' "Type", sequence_owner "Owner"
+        from all_sequences
+        order by sequence_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'clusters') {
+      my $sqlstr = q{
+        select cluster_name "Cluster Name", 'CLUSTER' "Type", owner "Owner"
+        from all_clusters
+        order by cluster_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'dimensions') {
+      my $sqlstr = q{
+        select dimension_name "Dimension Name", 'DIMENSION' "Type", owner "Owner"
+        from all_dimensions
+        order by dimension_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'functions') {
+      my $sqlstr = q{
+        select distinct name "Function Name", 'FUNCTION' "Type", owner "Owner"
+        from all_source
+        where type = 'FUNCTION'
+        order by name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'procedures') {
+      my $sqlstr = q{
+        select distinct name "Procedure Name", 'PROCEDURE' "Type", owner "Owner"
+        from all_source
+        where type = 'PROCEDURE'
+        order by name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'packages') {
+      my $sqlstr = q{
+        select distinct name "Package Name", 'PACKAGES' "Type", owner "Owner"
+        from all_source
+        where type = 'PACKAGE'
+        order by name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'indexes') {
+      my $sqlstr = q{
+        select index_name "Index Name", 'INDEXES' "Type", owner "Owner"
+        from all_indexes
+        order by index_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'indextypes') {
+      my $sqlstr = q{
+        select indextype_name "Indextype Name", 'INDEXTYPE' "Type", owner "Owner"
+        from all_indextypes
+        order by indextype_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'libraries') {
+      my $sqlstr = q{
+        select library_name "library Name", 'LIBRARY' "Type", owner "Owner"
+        from all_libraries
+        order by library_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'materialized views') {
+      my $sqlstr = q{
+        select mview_name "Materialized View Name", 'MATERIALIZED VIEW' "Type", owner "Owner"
+        from all_mviews
+        order by mview_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'snapshots') {
+      my $sqlstr = q{
+        select name "Snapshot Name", 'SNAPSHOT' "Type", owner "Owner"
+        from all_snapshots
+        order by name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'synonyms') {
+      my $sqlstr = q{
+        select synonym_name "Synonym Name", 'SYNONYM' "Type", owner "Owner"
+        from all_synonyms
+        order by synonym_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'triggers') {
+      my $sqlstr = q{
+        select trigger_name "Trigger Name", 'TRIGGER' "Type", owner "Owner"
+        from all_triggers
+        order by trigger_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'waits') {
+      my $sqlstr = q{
+        select vs.username "Username",
+               vs.osuser "OS User",
+               vsw.sid "SID",
+               vsw.event "Event",
+               decode(vsw.wait_time, -2, '         Unknown',
+                 to_char(vsw.seconds_in_wait,'999,999,999,999'))
+                 "Seconds Waiting"
+          from v$session_wait vsw,
+               v$session vs
+         where vsw.sid = vs.sid
+         order by vsw.wait_time desc, vsw.seconds_in_wait desc, vsw.sid
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } else {
+      query_err("show", "Unsupported show type", $input);
+    }
+  } elsif($input =~ /^\s*show\s+([a-zA-Z0-9_\$\#\s]+)\s*$/) {
+    if($1 eq 'tables') {
+      my $sqlstr = q{
+        select table_name "Table Name", 'TABLE' "Type", sys.login_user() "Owner"
+        from user_tables
+        order by table_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
+                               op_text => $op_text});
+    } elsif($1 eq 'views') {
+      my $sqlstr = q{
+        select view_name "View Name", 'VIEW' "Type", sys.login_user() "Owner"
+        from user_views
+        order by view_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'objects') {
+      my $sqlstr = q{
+        select object_name "Object Name", object_type "Type", sys.login_user() "Owner"
+        from user_objects
+        order by object_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'sequences') {
+      my $sqlstr = q{
+        select sequence_name "Sequence Name", 'SEQUENCE' "Type", sys.login_user() "Owner"
+        from user_sequences
+        order by sequence_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'clusters') {
+      my $sqlstr = q{
+        select cluster_name "Cluster Name", 'CLUSTER' "Type", sys.login_user() "Owner"
+        from user_clusters
+        order by cluster_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'dimensions') {
+      my $sqlstr = q{
+        select dimension_name "Dimension Name", 'DIMENSION' "Type", sys.login_user() "Owner"
+        from user_dimensions
+        order by dimension_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'functions') {
+      my $sqlstr = q{
+        select distinct name "Function Name", 'FUNCTION' "Type", sys.login_user() "Owner"
+        from user_source
+        where type = 'FUNCTION'
+        order by name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'procedures') {
+      my $sqlstr = q{
+        select distinct name "Procedure Name", 'PROCEDURE' "Type", sys.login_user() "Owner"
+        from user_source
+        where type = 'PROCEDURE'
+        order by name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'packages') {
+      my $sqlstr = q{
+        select distinct name "Package Name", 'PACKAGES' "Type", sys.login_user() "Owner"
+        from user_source
+        where type = 'PACKAGE'
+        order by name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'indexes') {
+      my $sqlstr = q{
+        select index_name "Index Name", 'INDEXES' "Type", sys.login_user() "Owner"
+        from user_indexes
+        order by index_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'indextypes') {
+      my $sqlstr = q{
+        select indextype_name "Indextype Name", 'INDEXTYPE' "Type", sys.login_user() "Owner"
+        from user_indextypes
+        order by indextype_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'libraries') {
+      my $sqlstr = q{
+        select library_name "library Name", 'LIBRARY' "Type", sys.login_user() "Owner"
+        from user_libraries
+        order by library_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'materialized views') {
+      my $sqlstr = q{
+        select mview_name "Materialized View Name", 'MATERIALIZED VIEW' "Type", sys.login_user() "Owner"
+        from user_mviews
+        order by mview_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'snapshots') {
+      my $sqlstr = q{
+        select name "Snapshot Name", 'SNAPSHOT' "Type", sys.login_user() "Owner"
+        from user_snapshots
+        order by name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'synonyms') {
+      my $sqlstr = q{
+        select synonym_name "Synonym Name", 'SYNONYM' "Type", sys.login_user() "Owner"
+        from user_synonyms
+        order by synonym_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'triggers') {
+      my $sqlstr = q{
+        select trigger_name "Trigger Name", 'TRIGGER' "Type", sys.login_user() "Owner"
+        from user_triggers
+        order by trigger_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'processes') {
+      my $sqlstr = q{
+        select sid, 
+               vs.username "User", 
+               vs.status "Status", 
+               vs.schemaname "Schema", 
+               vs.osuser || '@' || vs.machine "From", 
+               to_char(vs.logon_time, 'Mon DD YYYY HH:MI:SS') "Logon Time",
+               aa.name "Command"
+          from v$session vs, audit_actions aa 
+         where vs.command = aa.action
+           and username is not null
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'waits') {
+      my $sqlstr = q{
+        select vs.username "Username",
+               vs.osuser "OS User",
+               vsw.sid "SID",
+               vsw.event "Event",
+               decode(vsw.wait_time, -2, '         Unknown',
+                 to_char(vsw.seconds_in_wait,'999,999,999,999'))
+                 "Seconds Waiting"
+          from v$session_wait vsw,
+               v$session vs
+         where vsw.sid = vs.sid
+           and vs.status = 'ACTIVE'
+           and vs.username is not null
+         order by vsw.wait_time desc, vsw.seconds_in_wait desc, vsw.sid
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'plan') {
+      # This following query is Copyright (c) Oracle Corporation 1998, 1999. All Rights Reserved.
+      my $sqlstr = q{
+        select '| Operation                 |  Name    |  Rows | Bytes|  Cost  | Pstart| Pstop |'  as "Plan Table" from dual
+         union all
+        select '--------------------------------------------------------------------------------' from dual
+         union all
+        select rpad('| '||substr(lpad(' ',1*(level-1)) ||operation||
+                    decode(options, null,'',' '||options), 1, 27), 28, ' ')||'|'||
+               rpad(substr(object_name||' ',1, 9), 10, ' ')||'|'||
+               lpad(decode(cardinality,null,'  ',
+                    decode(sign(cardinality-1000), -1, cardinality||' ',
+                    decode(sign(cardinality-1000000), -1, trunc(cardinality/1000)||'K',
+                    decode(sign(cardinality-1000000000), -1, trunc(cardinality/1000000)||'M',
+                           trunc(cardinality/1000000000)||'G')))), 7, ' ') || '|' ||
+                lpad(decode(bytes,null,' ',
+                     decode(sign(bytes-1024), -1, bytes||' ',
+                     decode(sign(bytes-1048576), -1, trunc(bytes/1024)||'K',
+                     decode(sign(bytes-1073741824), -1, trunc(bytes/1048576)||'M',
+                            trunc(bytes/1073741824)||'G')))), 6, ' ') || '|' ||
+                lpad(decode(cost,null,' ',
+                     decode(sign(cost-10000000), -1, cost||' ',
+                     decode(sign(cost-1000000000), -1, trunc(cost/1000000)||'M',
+                            trunc(cost/1000000000)||'G'))), 8, ' ') || '|' ||
+                lpad(decode(partition_start, 'ROW LOCATION', 'ROWID',
+                     decode(partition_start, 'KEY', 'KEY', decode(partition_start,
+                     'KEY(INLIST)', 'KEY(I)', decode(substr(partition_start, 1, 6),
+                     'NUMBER', substr(substr(partition_start, 8, 10), 1,
+                     length(substr(partition_start, 8, 10))-1),
+                     decode(partition_start,null,' ',partition_start)))))||' ', 7, ' ')|| '|' ||
+                lpad(decode(partition_stop, 'ROW LOCATION', 'ROW L',
+                     decode(partition_stop, 'KEY', 'KEY', decode(partition_stop,
+                     'KEY(INLIST)', 'KEY(I)', decode(substr(partition_stop, 1, 6),
+                     'NUMBER', substr(substr(partition_stop, 8, 10), 1,
+                     length(substr(partition_stop, 8, 10))-1),
+                     decode(partition_stop,null,' ',partition_stop)))))||' ', 7, ' ')||'|' as "Explain plan"
+          from plan_table
+         start with id=0 and timestamp = (select max(timestamp) from plan_table where id=0)
+       connect by prior id = parent_id
+           and prior nvl(statement_id, ' ') = nvl(statement_id, ' ')
+           and prior timestamp <= timestamp
+         union all
+        select '--------------------------------------------------------------------------------' from dual
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'errors') {
+      my $err = $dbh->func( 'plsql_errstr' );
+      if($err) {
+        print "\n$err\n\n";
+      } else {
+        print "\nNo errors.\n\n";
+      }
+    } elsif($1 eq 'users') {
+      my $sqlstr = q{
+        select username, user_id, created
+          from all_users
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'user') {
+      my $sqlstr = q{
+        select user from dual
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif($1 eq 'uid') {
+      my $sqlstr = q{
+        select uid from dual
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } else {
+      query_err("show", "Unsupported show type", $input);
+    }
+  } else {
+    query_err("show", "Unsupported show type", $input);
+  }
+  
+      
+}
+
+sub describe {
+  my($input, $format, $nosynonym, $num_rows, $op, $op_text) = @_;
+  debugmsg(3, "describe called", @_);
+  # This describes a table, view, sequence, or synonym  by listing it's 
+  # columns and their attributes
+
+  # convert to lowercase for comparison operations
+  $input = lc($input);
+
+  # make sure we're still connected to the database
+  unless(ping()) {
+    wrn("Database connection died");
+    db_reconnect();
+  }
+    
+  # parse the query to find the table that was requested to be described
+  if($input =~ /^\s*desc\w*\s*([a-zA-Z0-9_\$\#\.\@]+)/) {
+    my $object = $1;
+    my $sqlstr;
+    my $type;
+    my @ret;
+
+    my $schema;
+    my $dblink;
+    if($object =~ /^([a-zA-Z0-9_\$\#]+)\.([a-zA-Z0-9_\$\#]+)\@([a-zA-Z0-9_\$\#]+)$/) {
+      $schema = $1;
+      $object = $2;
+      $dblink = "\@$3";
+    } elsif($object =~ /^([a-zA-Z0-9_\$\#]+)\@([a-zA-Z0-9_\$\#]+)$/) {
+      $schema = $dbuser;
+      $object = $1;
+      $dblink = "\@$2";
+    } elsif($object =~ /^([a-zA-Z0-9_\$\#]+)\.([a-zA-Z0-9_\$\#]+)$/) {
+      $schema = $1;
+      $object = $2;
+    } else {
+      $schema = $dbuser;
+    }
+
+    debugmsg(1,"schema: [$schema] object: [$object] dblink: [$dblink]");
+
+    if($conf{fast_describe}) {
+      if(my $sth = $dbh->prepare("select * from $schema.$object$dblink")) {
+        my $fields = $sth->{NAME};
+        my $types = $sth->{TYPE};
+        my $type_info = $dbh->type_info($types->[0]);
+        my $precision = $sth->{PRECISION};
+        my $scale = $sth->{SCALE};
+        my $nullable = $sth->{NULLABLE};
+
+        debugmsg(4, "fields: [" . join(',', @$fields) . "]");
+        debugmsg(4, "types: [" . join(',', @$types) . "]");
+        debugmsg(4, "type_info: [" . Dumper($type_info) . "]");
+        debugmsg(4, "precision: [" . join(',', @$precision) . "]");
+        debugmsg(4, "scale: [" . join(',', @$scale) . "]");
+        debugmsg(4, "nullable: [" . join(',', @$nullable) . "]");
+
+        # Assemble a multidiminsional array of the output
+        my @desc;
+        for(my $i = 0; $i < @$fields; $i++) {
+          my ($name, $null, $type);
+          $name = $fields->[$i];
+          $null = ($nullable->[$i] ? 'NULL' : 'NOT NULL');
+          my $type_info = $dbh->type_info($types->[$i]);
+          $type = $type_info->{'TYPE_NAME'};
+          # convert DECIMAL to NUMBER for our purposes (some kind of DBD kludge)
+          $type = 'NUMBER' if $type eq 'DECIMAL';
+          if( $type eq 'VARCHAR2' || $type eq 'NVARCHAR2' ||
+              $type eq 'CHAR' || $type eq 'NCHAR' || $type eq 'RAW' )
+          {
+            $type .= "($precision->[$i])";
+          } elsif($type eq 'NUMBER' && ($scale->[$i] || $precision->[$i] < 38))
+          {
+            $type .= "($precision->[$i],$scale->[$i])";
+          }
+          push(@desc, [$name, $null, $type]);
+        }
+
+        # figure max column sizes we'll need
+        my @widths = (4,5,4);
+        for(my $i = 0; $i < @desc; $i++) {
+          for(my $j = 0; $j < @{$desc[0]}; $j++) {
+            if(length($desc[$i][$j]) > $widths[$j]) {
+              $widths[$j] = length($desc[$i][$j]);
+            }
+          }
+        }
+
+	# open the redirection file
+	if($op && $op eq '>' || $op eq '>>') {
+    	    ($op_text) = glob($op_text);
+    	    debugmsg(3, "Opening file '$op_text' for output redirection using [$op]");
+	    open(FOUT, $op . $op_text) || do query_err('redirect',"Cannot open file '$op_text' for writing: $!", '');
+        } elsif($op eq '|') {
+    	    ($op_text) = glob($op_text);
+	    open(FOUT, $op . $op_text) || do query_err('pipe',"Cannot open pipe '$op_text': $!", '');
+	} else {
+	    open(FOUT, ">&STDOUT");
+	}
+        
+        if($opt_headers) {
+          # Print headers
+          print FOUT "\n";
+          print FOUT sprintf("%-$widths[0]s", 'Name')
+              . ' '
+              . sprintf("%-$widths[1]s", 'Null?')
+              . ' '
+              . sprintf("%-$widths[2]s", 'Type')
+              . "\n";
+          print FOUT '-' x $widths[0]
+              . ' '
+              . '-' x $widths[1]
+              . ' '
+              . '-' x $widths[2]
+              . "\n";
+        }
+        for(my $i = 0; $i < @desc; $i++) {
+          for(my $j = 0; $j < @{$desc[$i]}; $j++) {
+            print FOUT ' ' if $j > 0;
+            print FOUT sprintf("%-$widths[$j]s", $desc[$i][$j]);
+          }
+          print FOUT "\n";
+        }
+        print FOUT "\n";
+
+	close(FOUT);
+
+        return();
+      }
+    }
+
+    # look in all_constraints for the object first.  This is because oracle
+    # stores information about primary keys in the all_objects table as "index"s
+    # but it doesn't have foreign keys or constraints.  So we want to match
+    # there here first
+
+    # now look in all_objects
+    my $all_object_cols = 'object_type,owner,object_name,'
+                        . 'object_id,created,last_ddl_time,'
+                        . 'timestamp,status';
+
+    @ret = $dbh->selectrow_array(
+      "select $all_object_cols from all_objects where object_name = ? "
+        ."and owner = ?"
+        .($nosynonym ? " and object_type != 'SYNONYM'" : ""), 
+        undef, uc($object), uc($schema)
+    ) or
+    @ret = $dbh->selectrow_array(
+      "select $all_object_cols from all_objects where object_name = ? "
+        ."and owner = 'PUBLIC'" 
+        .($nosynonym ? " and object_type != 'SYNONYM'" : ""), 
+        undef, uc($object)
+    );
+
+    unless(@ret) {
+      @ret = $dbh->selectrow_array(
+        "select constraint_type, constraint_name from all_constraints where "
+          ."constraint_name = ?",
+        undef, uc($object)
+      );
+    }
+
+    if($ret[0] eq 'INDEX') {
+      # Check if this 'index' is really a primary key and is in the
+      # all_constraints table
+
+      my @temp_ret = $dbh->selectrow_array(
+        "select constraint_type, constraint_name from all_constraints where "
+          ."constraint_name = ?",
+        undef, uc($object)
+      );
+      
+      @ret = @temp_ret if @temp_ret;
+    }
+
+    $type = $ret[0];
+    debugmsg(1,"type: [$type] ret: [@ret]");
+
+    if($type eq 'SYNONYM') {
+      # Find what this is a synonym to, then recursively call this function
+      # again to describe whatever it points to
+      my($table_name, $table_owner) = $dbh->selectrow_array(
+        'select table_name, table_owner from all_synonyms '
+        .'where synonym_name = ? and owner = ?',
+        undef, uc($ret[2]), uc($ret[1])
+      );
+      
+      describe("desc $table_owner.$table_name", $format, 1);
+    } elsif($type eq 'SEQUENCE') {
+      my $sqlstr = q{
+        select sequence_name "Name", 
+          min_value "Min", 
+          max_value "Max", 
+          increment_by "Inc", 
+          cycle_flag "Cycle", 
+          order_flag "Order", 
+          last_number "Last"
+        from all_sequences
+        where sequence_name = ?
+          and sequence_owner = ?
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text}, uc($ret[2]), uc($ret[1]));
+    } elsif($type eq 'TABLE' || $type eq 'VIEW' || $type eq 'TABLE PARTITION') {
+      my $sqlstr = q{
+        select column_name "Name",   
+               decode(nullable,
+                 'N','NOT NULL'
+                 ) "Null?",
+               decode(data_type,
+                 'VARCHAR2','VARCHAR2(' || TO_CHAR(data_length) || ')',
+                 'NVARCHAR2','NVARCHAR2(' || TO_CHAR(data_length) || ')',
+                 'CHAR','CHAR(' || TO_CHAR(data_length) || ')',
+                 'NCHAR','NCHAR(' || TO_CHAR(data_length) || ')',
+                 'NUMBER',
+                   decode(data_precision,
+                     NULL, 'NUMBER',
+                     'NUMBER(' || TO_CHAR(data_precision)
+                                || ',' || TO_CHAR(data_scale) || ')'
+                   ),
+                 'FLOAT',
+                   decode(data_precision,
+                     NULL, 'FLOAT', 'FLOAT(' || TO_CHAR(data_precision) || ')'
+                   ),
+                 'DATE','DATE',
+                 'LONG','LONG',
+                 'LONG RAW','LONG RAW',
+                 'RAW','RAW(' || TO_CHAR(data_length) || ')',
+                 'MLSLABEL','MLSLABEL',
+                 'ROWID','ROWID',
+                 'CLOB','CLOB',
+                 'NCLOB','NCLOB',
+                 'BLOB','BLOB',
+                 'BFILE','BFILE',
+                 data_type || ' ???'
+               ) "Type",
+               data_default "Default"
+          from all_tab_columns
+         where table_name = ?
+           and owner = ?
+         order by column_id
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text}, uc($ret[2]), uc($ret[1]));
+    } elsif($type eq 'R') {
+      my $sqlstr = q{
+        select ac.constraint_name "Name", 
+               decode(ac.constraint_type, 
+                 'R', 'Foreign Key',
+                 'C', 'Check',
+                 'U', 'Unique',
+                 'P', 'Primary Key',
+                 ac.constraint_type) "Type",
+               ac.table_name "Table Name", 
+               acc.column_name "Column Name", 
+               r_ac.table_name "Parent Table", 
+               r_acc.column_name "Parent Column",
+               ac.delete_rule "Delete Rule"
+          from all_constraints ac, all_cons_columns acc,
+               all_constraints r_ac, all_cons_columns r_acc
+         where ac.constraint_name = acc.constraint_name
+           and ac.owner = acc.owner
+           and ac.r_constraint_name = r_ac.constraint_name
+           and r_ac.constraint_name = r_acc.constraint_name
+           and r_ac.owner = r_acc.owner
+           and ac.constraint_type = 'R'
+           and ac.constraint_name = ?
+           and ac.owner = ?
+         order by ac.constraint_name, acc.position
+      };
+      query($sqlstr, 'list_aligned', {num_rows => $num_rows, op => $op, 
+                                      op_text => $op_text}, uc($ret[1]),
+                                      uc($schema));
+    } elsif($type eq 'P' || $type eq 'U') {
+      my $sqlstr = q{
+        select ac.constraint_name "Name", 
+               decode(ac.constraint_type, 
+                 'R', 'Foreign Key',
+                 'C', 'Check',
+                 'U', 'Unique',
+                 'P', 'Primary Key',
+                 ac.constraint_type) "Type",
+               ac.table_name "Table Name", 
+               acc.column_name "Column Name" 
+          from all_constraints ac, all_cons_columns acc
+         where ac.constraint_name = acc.constraint_name
+           and ac.owner = acc.owner
+           and ac.constraint_name = ?
+           and ac.owner = ?
+         order by ac.constraint_name, acc.position
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text}, uc($ret[1]), uc($schema));
+    } elsif($type eq 'C') {
+      my $sqlstr = q{
+        select ac.constraint_name "Name", 
+               decode(ac.constraint_type, 
+                 'R', 'Foreign Key',
+                 'C', 'Check',
+                 'U', 'Unique',
+                 'P', 'Primary Key',
+                 ac.constraint_type) "Type",
+               ac.table_name "Table Name", 
+               ac.search_condition "Search Condition"
+          from all_constraints ac
+         where ac.constraint_name = ?
+         order by ac.constraint_name
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text}, uc($ret[1]));
+    } elsif($type eq 'INDEX') {
+      my $sqlstr = q{
+        select ai.index_name "Index Name",
+               ai.index_type "Type",
+               ai.table_name "Table Name",
+               ai.uniqueness "Unique?",
+               aic.column_name "Column Name"
+          from all_indexes ai, all_ind_columns aic
+         where ai.index_name = aic.index_name(+)
+           and ai.table_owner = aic.table_owner(+)
+           and ai.index_name = ?
+           and ai.table_owner = ?
+         order by aic.column_position
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text}, uc($ret[2]), uc($schema));
+    } elsif($type eq 'TRIGGER') {
+      my $sqlstr = q{
+        select trigger_name "Trigger Name",
+               trigger_type "Type",
+               triggering_event "Event",
+               table_name "Table",
+               when_clause "When",
+               description "Description",
+               trigger_body "Body"
+          from all_triggers
+         where trigger_name = ?
+      };
+      query($sqlstr, 'list_aligned', {num_rows => $num_rows, op => $op, 
+                                      op_text => $op_text}, uc($ret[2]));
+    } elsif($type eq 'PACKAGE') {
+      wrn("Not implemented (yet)");
+    } elsif($type eq 'PROCEDURE') {
+      wrn("Not implemented (yet)");
+    } elsif($type eq 'CLUSTER') {
+      wrn("Not implemented (yet)");
+    } elsif($type eq 'TRIGGER') {
+      wrn("Not implemented (yet)");
+    } else {
+      query_err('describe', "Object $object not found");
+    }
+  }
+}
+
+sub set_cmd {
+  my($input) = @_;
+  debugmsg(3, "set_cmd called", @_);
+  # This mimics SQL*Plus set commands, or ignores them completely.  For those
+  # that are not supported, we do nothing at all, but return silently.
+
+  if($input =~ /^\s*set\s+serverout(?:put)?\s+(on|off)(?:\s+size\s+(\d+))?/i) {
+    if(lc($1) eq 'on') {
+      my $size = $2 || 1_000_000;
+      debugmsg(2, "calling dbms_output_enable($size)");
+      $dbh->func( $size, 'dbms_output_enable' );
+      $set{serveroutput} = 1;
+      debugmsg(2, "serveroutput set to $set{serveroutput}");
+    } else {
+      $set{serveroutput} = 0;
+      debugmsg(2, "serveroutput set to $set{serveroutput}");
+    }
+  }
+}
+    
+sub query {
+  my($sqlstr, $format, $opts, @bind_vars) = @_;
+  debugmsg(3, "query called", @_);
+  # this runs the provided query and calls format_display to display the results
+
+  my $num_rows      = $opts->{num_rows};
+  my $op            = $opts->{op};
+  my $op_text       = $opts->{op_text};
+  my $result_output = ( exists $opts->{result_output}
+                      ? $opts->{result_output}
+                      : 1
+                      );
+
+  my(@totalbench, @querybench, @formatbench);
+
+  # Look for special query types, such as "show" and "desc" that we handle
+  # and don't send to the database at all, since they're not really valid SQL.
+
+  my ($rows_affected, $success_code);
+ 
+  if($sqlstr =~ /^\s*desc/i) {
+    describe($sqlstr, $format, undef, $num_rows, $op, $op_text);
+  } elsif($sqlstr =~ /^\s*show/i) {
+    show($sqlstr, $format, $num_rows, $op, $op_text);
+  } else {
+    $running_query = 1;
+
+    # make sure we're still connected to the database
+    unless(ping()) {
+      wrn("Database connection died");
+      db_reconnect();
+    }
+
+    $sqlstr = wildcard_expand($sqlstr) if $conf{column_wildcards};
+
+    # send the query on to the database 
+    push(@totalbench, get_bench()) if !$conf{extended_benchmarks};
+    push(@querybench, get_bench()) if $conf{extended_benchmarks};
+    debugmsg(3, "preparing", $sqlstr);
+    my $sth = $dbh->prepare($sqlstr);
+    unless($sth) {
+      my $err = $DBI::errstr;
+      $err =~ s/ \(DBD ERROR\: OCIStmtExecute\/Describe\)//;
+
+      if ($err =~ m/DBD ERROR\:/) {
+	my $indicator_offset = $DBI::errstr;
+	$indicator_offset =~ s/(.*)(at\ char\ )(\d+)(\ .*)/$3/;
+	if ($indicator_offset > 0) {
+    	    my $i = 0;
+    	    print $sqlstr, "\n";
+	    for ($i=0;$i<$indicator_offset;++$i) {
+		print " ";
+	    }
+	    print "*\n";
+        }
+      }
+
+      # Output message if serveroutput is on
+      if($set{serveroutput}) {
+        debugmsg(3, "Calling dmbs_output_get");
+        my @output = $dbh->func( 'dbms_output_get' );
+        print join("\n", @output) . "\n";
+      }
+      query_err('prepare', $err, $sqlstr), setup_sigs(), return();
+    }
+    debugmsg(2, "sth: [$sth]");
+
+    $cursth = $sth;
+
+    finish_query($sth), return() if $sigintcaught; #pseudo sig handle
+
+    my $ret;
+    eval {
+      debugmsg(3, "executing", $sqlstr);
+      $ret = $sth->execute(@bind_vars);
+    };
+    debugmsg(3, "ret:", $ret, "\@:", $@, "\$DBI::errstr:", $DBI::errstr);
+    if(!$ret) {
+      my $eval_error = $@;
+      $eval_error =~ s/at \(eval \d+\) line \d+, <\S+> line \d+\.//;
+      my $err = $DBI::errstr;
+      $err =~ s/ \(DBD ERROR: OCIStmtExecute\)//;
+      # Output message is serveroutput is on
+      if($set{serveroutput}) {
+        debugmsg(3, "Calling dmbs_output_get");
+        my @output = $dbh->func( 'dbms_output_get' );
+        print join("\n", @output) . "\n";
+      }
+      my $errstr = ($eval_error ? $eval_error : $err);
+      query_err('execute', $errstr, $sqlstr);
+      setup_sigs();
+      return();
+    }
+
+    if($DBI::errstr =~ /^ORA-24344/) {
+      print "\nWarning: Procedure created with compilation errors.\n\n";
+      setup_sigs();
+      return();
+    }
+
+    push(@querybench, get_bench()) if $conf{extended_benchmarks};
+
+    finish_query($sth), return() if $sigintcaught; #pseudo sig handle
+
+    debugmsg(1, "rows returned: [" . $sth->rows() . "]");
+
+    # open the redirection file
+    if($op && $op eq '>' || $op eq '>>') {
+      ($op_text) = glob($op_text);
+      debugmsg(3, "Opening file '$op_text' for output redirection using [$op]");
+      open(FOUT, $op . $op_text) || do{
+        query_err('redirect',"Cannot open file '$op_text' for writing: $!",
+                  $sqlstr);
+        finish_query($sth);
+        return();
+      };
+    } elsif($op eq '|') {
+      ($op_text) = glob($op_text);
+      open(FOUT, $op . $op_text) || do{
+        query_err('pipe',"Cannot open pipe '$op_text': $!", $sqlstr);
+        finish_query($sth);
+        return();
+      }
+    } else {
+      open(FOUT, ">&STDOUT");
+    }
+
+    # Output message is serveroutput is on
+    if($set{serveroutput}) {
+      debugmsg(3, "Calling dmbs_output_get");
+      my @output = $dbh->func( 'dbms_output_get' );
+      print join("\n", @output) . "\n";
+    }
+
+    # Determine type and output accordingly
+    if($sqlstr =~ /^\s*declare|begin/i) {
+      print STDERR "\nPL/SQL procedure successfully completed.\n\n";
+    } else {
+      push(@formatbench, get_bench()) if $conf{extended_benchmarks};
+      ($rows_affected, $success_code) = format_output($sth, $format, $num_rows,
+                                                     $sqlstr, $op, $op_text)
+        or finish_query($sth), return();
+      push(@formatbench, get_bench()) if $conf{extended_benchmarks};
+      push(@totalbench, get_bench()) if !$conf{extended_benchmarks};
+   
+      finish_query($sth), return() if $sigintcaught; #pseudo sig handle
+
+      # output format_affected
+      if($result_output) {
+        if(!$opt_batch) {
+          print STDERR "\n" . format_affected($rows_affected, $success_code);
+        }
+
+        if(!$opt_batch) {
+          if($opt_bench || $conf{extended_benchmarks}) {
+            print STDERR "\n\n";
+            print STDERR ('-' x 80);
+            print STDERR "\n";
+            output_benchmark("Query: ", @querybench, "\n");
+            output_benchmark("Format:", @formatbench, "\n");
+          } else {
+            output_benchmark(" (", @totalbench, ")");
+            print STDERR "\n";
+          }
+          print STDERR "\n";
+        }
+      }
+    }
+
+    close(FOUT);
+
+    finish_query($sth);
+
+    undef($sth);
+    undef($cursth);
+  }
+
+  return($rows_affected, $success_code);
+}
+
+sub wildcard_expand {
+  my($sql) = @_;
+  debugmsg(3, "wildcard_expand called", @_);
+
+  my $newsql = $sql;
+  my $fromstuff;
+  my $wheregrouporder = $sql;
+  $wheregrouporder =~ s/.*(where|order|group).*/\1/;
+  if ($wheregrouporder eq $sql) {
+    $wheregrouporder = "";
+  }
+  ($sql,$fromstuff) = split(/order|group|where/i,$sql,2);
+  if ($sql =~ /^select\s+(.+?)\*\s+from\s+(.+)/i) {
+    debugmsg(1, "Match made: ($1) ($2)");
+    my $wildcardstring = uc($1);
+    my $tablename = uc($2);
+    my @tlist = split(/,/,$tablename);
+    my $tablelist = "";
+    my %column_prefix;
+    foreach my $table (@tlist) {
+      $table =~ s/^ *//;
+      $table =~ s/([^ ]+)\s+(.*)/\1/;
+      $column_prefix{$table} = $2 ? $2 : $table;
+      $tablelist .= ($tablelist ? "," : "") . $table;
+    }
+    $tablelist =~ s/,/' or table_name='/g;
+    my $qstr = "select table_name||'.'||column_name from all_tab_columns where (table_name='$tablelist') and column_name like '$wildcardstring%' escape '\\'";
+    debugmsg(1, "qstr: [$qstr]");
+    my $sth = $dbh->prepare($qstr);
+    $sth->execute();
+    setup_sigs();
+    my $colname;
+    my $collist;
+    while ( ($colname) = $sth->fetchrow_array() ) {
+      foreach my $table (keys %column_prefix) {
+        $colname =~ s/$table\./$column_prefix{$table}\./;
+        $colname =~ s/ //g;
+      }
+      $collist .= ($collist ? "," : "") . $colname;
+    }
+    $collist = $collist ? $collist : "*";
+    $newsql = "select " . $collist . " from " . $tablename . " "
+            . $wheregrouporder . " " . $fromstuff;
+    debugmsg(1, "newsql: [$newsql]");
+  }
+  $newsql;
+}
+
+sub finish_query {
+  my($sth) = @_;
+  # This just finishes the query and cleans up the state info
+
+  $sth->finish;
+  undef($cursth);
+  $running_query = 0;
+  setup_sigs();
+}
+
+sub get_bench {
+  debugmsg(3, "get_bench called", @_);
+  # returns benchmark info
+  
+  my($benchmark, $hires);
+  $benchmark = new Benchmark; 
+
+  if($nohires) {
+    $hires = time;
+  } else {
+    # use an eval to keep perl from syntax checking it unless we have the
+    # Time::HiRes module loaded
+    eval q{
+      $hires = [gettimeofday]
+    };
+  }
+
+  return($benchmark, $hires);
+}
+
+sub output_benchmark {
+  my($string, $bstart, $hrstart, $bend, $hrend, $string2) = @_;
+  debugmsg(3, "output_benchmark called", @_);
+  # This just outputs the benchmark info
+  
+  my $bench = timediff($bend, $bstart);
+  
+  my $time;
+  if($nohires) {
+    # the times will be seconds
+    $time = $hrend - $hrstart;
+  } else {
+    eval q{$time = tv_interval($hrstart, $hrend)};
+    $time = sprintf("%.2f", $time);
+  }
+
+  unless($opt_bench || $conf{extended_benchmarks}) {
+    # convert $time to something more readable
+    $time =~ s/\.(\d+)$//;
+    my $decimal = $1;
+    my @tparts;
+    my $tmp;
+    if(($tmp = int($time / 604800)) >= 1) {
+      push(@tparts, "$tmp week" . ($tmp != 1 && 's'));
+      $time %= 604800;
+    }
+    if(($tmp = int($time / 86400)) >= 1) {
+      push(@tparts, "$tmp day" . ($tmp != 1 && 's'));
+      $time %= 86400;
+    }
+    if(($tmp = int($time / 3600)) >= 1) {
+      push(@tparts, "$tmp hour" . ($tmp != 1 && 's'));
+      $time %= 3600;
+    }
+    if(($tmp = int($time / 60)) >= 1) {
+      push(@tparts, "$tmp minute" . ($tmp != 1 && 's'));
+      $time %= 60;
+    }
+    $time ||= '0';
+    $decimal ||= '00';
+    $time .= ".$decimal";
+    push(@tparts, "$time second" . ($time != 1 && 's'));
+    $time = join(", ", @tparts);
+  }
+  
+  if($opt_bench || $conf{extended_benchmarks}) {
+    print STDERR "$string\[ $time second" . ($time != 1 && 's')
+        . " ] [" . timestr($bench) . " ]$string2";
+  } else {
+    print STDERR "$string$time$string2";
+  }
+}
+
+sub format_output {
+  my($sth, $format, $num_rows, $sqlstr, $op, $op_text) = @_;
+  debugmsg(3, "format_output called", @_);
+  # Formats the output according to the query terminator.  If it was a ';' or
+  # a '/' then a normal table is output.  If it was a '\g' then all the columns   # and rows are output put line by line.
+  # input:  $sth $format
+  #         sth is the statement handler
+  #         format can be either 'table', 'list', or 'list_aligned'
+  # output: returns 0 on error, ($success_code, $rows_affected) on success
+  #         $success_code = ('select', 'affected');
+
+  debugmsg(3,"type: [" . Dumper($sth->{TYPE}) . "]");
+
+  # Is this query a select?
+  my $isselect = 1 if $sqlstr =~ /^\s*select/i;
+
+  if($format eq 'table') {
+    my $count = 0;
+    my $res = [];
+    my $overflow = 0;
+    while(my @res = $sth->fetchrow_array()) {
+      push(@$res, \@res);
+      $count++;
+      if($count > 1000) {
+        debugmsg(1,"overflow in table output, switching to serial mode");
+        $overflow = 1;
+        last;
+      }
+      debugmsg(1,"num_rows hit on fetch") if $num_rows && $count >= $num_rows;
+      last if $num_rows && $count >= $num_rows;
+      return(0) if $sigintcaught; #pseudo sig handle
+    }
+
+    # If we didn't get any rows back, then the query was probably an insert or 
+    # update, so we call format_affected
+    if(@$res <= 0 && !$isselect) {
+      return($sth->rows(), 'affected');
+    }
+    
+    return(0) if $sigintcaught; #pseudo sig handle
+
+    # First go through all the return data to determine column widths
+    my @widths;
+    for( my $i = 0; $i < @{$res}; $i++ ) {
+      for( my $j = 0; $j < @{$res->[$i]}; $j++ ) {
+        if(length($res->[$i]->[$j]) > $widths[$j]) {
+          $widths[$j] = length($res->[$i]->[$j]);
+        }
+      }
+      return(0) if $sigintcaught; #pseudo sig handle
+      debugmsg(1,"num_rows hit on calc") if $num_rows && $i >= $num_rows-1;
+      last if $num_rows && $i >= $num_rows-1;
+    }
+
+    return(0) if $sigintcaught; #pseudo sig handle
+
+    my $fields = $sth->{NAME};
+    my $types = $sth->{TYPE};
+    my $nullable = $sth->{NULLABLE};
+
+    debugmsg(4, "fields: [" . Dumper($fields) . "]");
+    debugmsg(4, "types: [" . Dumper($types) . "]");
+    debugmsg(4, "nullable: [" . Dumper($nullable) . "]");
+    
+    return(0) if $sigintcaught; #pseudo sig handle
+
+    # Extend the column widths if the column name is longer than any of the
+    # data, so that it doesn't truncate the column name
+    for( my $i = 0; $i < @$fields; $i++ ) {
+      if(length($fields->[$i]) > $widths[$i]) {
+        debugmsg(3, "Extending $fields->[$i] for name width");
+        $widths[$i] = length($fields->[$i]);
+      }
+      return(0) if $sigintcaught; #pseudo sig handle
+    }
+
+    return(0) if $sigintcaught; #pseudo sig handle
+
+    # Extend the column widths if the column is NULLABLE so that we'll
+    # have room for 'NULL'
+    for( my $i = 0; $i < @$nullable; $i++ ) {
+      if($nullable->[$i] && $widths[$i] < 4) {
+        debugmsg(3, "Extending $fields->[$i] for null");
+        $widths[$i] = 4;
+      }
+      return(0) if $sigintcaught; #pseudo sig handle
+    }
+
+    return(0) if $sigintcaught; #pseudo sig handle
+
+    my $sumwidths;
+    foreach(@widths) {
+      $sumwidths += $_;
+    }
+
+    return(0) if $sigintcaught; #pseudo sig handle
+
+    debugmsg(2,"fields: [" . join("|", @$fields) . "] sumwidths: [$sumwidths] widths: [" . join("|", @widths) . "]\n");
+
+    return(0) if $sigintcaught; #pseudo sig handle
+
+    # now do the actual outputting, starting with the header
+    my $rows_selected = 0;
+    if(@$res) {
+      if(!$opt_batch) {
+        print FOUT "\r[K" if $op eq '<';
+        print FOUT "\n";
+        for( my $i = 0; $i < @$fields; $i++ ) {
+          if($opt_batch) {
+            print FOUT "\t" if $i > 0;
+            print FOUT sprintf("%s", $fields->[$i]);
+          }
+          else
+          {
+            print FOUT " " if $i > 0;
+            if($types->[$i] == 3 || $types->[$i] == 8) {
+              print FOUT sprintf("%$widths[$i]s", $fields->[$i]);
+            } else {
+              print FOUT sprintf("%-$widths[$i]s", $fields->[$i]);
+            }
+          }
+        }
+        print FOUT "\n";
+        
+        for( my $i = 0; $i < @$fields; $i++ ) {
+          print FOUT " " if $i > 0;
+          print FOUT '-' x $widths[$i];
+        }
+        print FOUT "\n";
+      }
+    
+      return(0) if $sigintcaught; #pseudo sig handle
+
+      # now print the actual data rows
+      my $count = 0;
+      for( my $j = 0; $j < @$res; $j++ ) {
+        $count = $j;
+        for( my $i = 0; $i < @$fields; $i++ ) {
+          print FOUT " " if $i > 0;
+          my $data = $res->[$j]->[$i];
+          # Strip out plain ole \r's since SQL*Plus seems to...
+          $data =~ s/\r//g;
+          $data = 'NULL' unless defined $data;
+          if($types->[$i] == 3 || $types->[$i] == 8) {
+            print FOUT sprintf("%$widths[$i]s", $data);
+          } else {
+            print FOUT sprintf("%-$widths[$i]s", $data);
+          }
+        }
+        print FOUT "\n";
+    
+        $rows_selected++;
+        debugmsg(2,"num_rows hit on output") if $num_rows && $j >= $num_rows-1;
+        last if $num_rows && $j >= $num_rows-1;
+        return(0) if $sigintcaught; #pseudo sig handle
+      }
+
+      if($overflow) {
+        # output the rest of the data from the statement handler
+        while(my $res = $sth->fetch()) {
+          $count++;
+          for( my $i = 0; $i < @$fields; $i++ ) {
+            print FOUT " " if $i > 0;
+            my $data = substr($res->[$i],0,$widths[$i]);
+            # Strip out plain ole \r's since SQL*Plus seems to...
+            $data =~ s/\r//g;
+            $data = 'NULL' unless defined $data;
+            if($types->[$i] == 3 || $types->[$i] == 8) {
+              print FOUT sprintf("%$widths[$i]s", $data);
+            } else {
+              print FOUT sprintf("%-$widths[$i]s", $data);
+            }
+          }
+          print FOUT "\n";
+    
+          $rows_selected++;
+          debugmsg(2,"num_rows hit on output")
+            if $num_rows && $count >= $num_rows-1;
+          last if $num_rows && $count >= $num_rows-1;
+          return(0) if $sigintcaught; #pseudo sig handle
+        }
+      }
+    }
+
+    return($rows_selected, 'selected');
+        
+  } elsif($format eq 'list') {
+    # output in a nice list format, which is where we print each row in turn,
+    # with each column on it's own line
+    
+    my $fields = $sth->{NAME};
+   
+    print "\r[K" if $op eq '<';
+    print FOUT "\n";
+    
+    my $count = 0;
+    while(my $res = $sth->fetch()) {
+      print FOUT "\n**** Row: " . ($count+1) . "\n";
+      for( my $i = 0; $i < @$fields; $i++ ) {
+        my $data = $res->[$i];
+        $data = 'NULL' unless defined $data;
+        print FOUT $fields->[$i] . ": " . $data . "\n";
+      }
+      $count++;
+      last if $num_rows && $count >= $num_rows;
+      return(0) if $sigintcaught; #pseudo sig handle
+    }
+
+    return(0) if $sigintcaught; #pseudo sig handle
+
+    # If we didn't get any rows back, then the query was probably an insert or 
+    # update, so we call format_affected
+    if($count <= 0 && !$isselect) {
+      return($sth->rows(), 'affected');
+    }
+    
+    return($count, 'selected');
+    
+  } elsif($format eq 'list_aligned') {
+    # output in a nice list format, which is where we print each row in turn,
+    # with each column on it's own line.  The column names are aligned in this
+    # one (so that the data all starts on the same column)
+    
+    my $fields = $sth->{NAME};
+
+    print "\r[K" if $op eq '<';
+    print FOUT "\n";
+    
+    my $maxwidth = 0;
+    for( my $i = 0; $i < @$fields; $i++ ) {
+      my $len = length($fields->[$i]) + 1; # +1 for the colon
+      $maxwidth = $len if $len >= $maxwidth;
+    }
+    
+    return(0) if $sigintcaught; #pseudo sig handle
+
+    my $count = 0;
+    while(my $res = $sth->fetch()) {
+      print FOUT "\n**** Row: " . ($count+1) . "\n";
+      for( my $i = 0; $i < @$fields; $i++ ) {
+        my $data = $res->[$i];
+        $data = 'NULL' unless defined $data;
+        print FOUT sprintf("%-" . $maxwidth . "s", $fields->[$i] . ":");
+        print FOUT " " . $data . "\n";
+      }
+      $count++;
+      last if $num_rows && $count >= $num_rows;
+      return(0) if $sigintcaught; #pseudo sig handle
+    }
+
+    return(0) if $sigintcaught; #pseudo sig handle
+
+    # If we didn't get any rows back, then the query was probably an insert or 
+    # update, so we call format_affected
+    if($count <= 0 && !$isselect) {
+      return($sth->rows(), 'affected');
+    }
+    
+    return($count, 'selected');
+    
+  } elsif($format eq 'single_output') {
+    # Outputs a single return column/row without any labeling    
+
+    print FOUT "\n";
+
+    my $res = $sth->fetchrow_array();
+    print FOUT "$res\n";
+    
+    my $count = ($res ? 1 : 0);
+
+    return(0) if $sigintcaught; #pseudo sig handle
+
+    return($count, 'selected');
+    
+  } elsif($format eq 'csv' || $format eq 'csv_no_header') {
+    # output in a comma seperated values format.  fields with a ',' are quoted
+    # with '"' quotes, and rows are seperated by '\n' newlines    
+
+    print "\r[K" if $op eq '<';
+    print FOUT "\n";
+    
+    # check that Text::CSV_XS was included ok, if not output an error
+    if($notextcsv) {
+      soft_err("You must install Text::CSV_XS from CPAN to use this feature");
+      return(0);
+    } else {
+      my $fields = $sth->{NAME};
+
+      if($format eq 'csv') {
+        # Print the column headers
+        for(my $i = 0; $i < @$fields; $i++) {
+          print FOUT "," if $i > 0;
+          print FOUT $fields->[$i];
+        }
+        print FOUT "\n";
+      }
+    
+      my $count = 0;
+      while(my $res = $sth->fetch()) {
+        $count++;
+
+        $csv->combine(@$res);
+        print FOUT $csv->string() . "\n";
+      
+        last if $num_rows && $count >= $num_rows;
+        return(0) if $sigintcaught; #pseudo sig handle
+      }
+      
+      return(0) if $sigintcaught; #pseudo sig handle
+
+      # If we didn't get any rows back, then the query was probably an insert or 
+      # update, so we call format_affected
+      if($count <= 0 && !$isselect) {
+        return($sth->rows(), 'affected');
+      }
+    
+      return($count, 'selected');
+    }
+  } elsif($format eq 'sql') {
+    # Produce SQL insert statements.
+    print "\r" if $op eq '<';
+    print FOUT "\n";
+
+    my $cols = lc join(', ', @{$sth->{NAME}});
+    my @types = map { scalar $dbh->type_info($_)->{TYPE_NAME} } @{ $sth->{TYPE} };
+    my %warned_unknown_type;
+
+    my $count = 0;
+    while(my $res = $sth->fetch()) {
+	$count++;
+	die if @$res != @types;
+	print FOUT "insert into TABLE ($cols) values (";
+	foreach (0 .. $#$res) {
+	    my $t = $types[$_];
+	    my $v = $res->[$_];
+	    if (not defined $v) {
+		print FOUT 'null';
+	    } else {
+		if ($t eq 'DOUBLE' or $t eq 'NUMBER') {
+		    die "bad number: $v" if $v !~ /\d/;
+		    print FOUT $v;
+		} elsif ($t eq 'VARCHAR2' or $t eq 'CHAR' or $t eq 'CLOB') {
+		    $v =~ s/['']/''/g;
+		    print FOUT "'$v'";
+		} elsif ($t eq 'DATE') {
+		    print FOUT "'$v'";
+		} else {
+		    warn "don't know how to handle SQL type $t"
+		    unless $warned_unknown_type{$t}++;
+		    print FOUT "(unknown type $t: $v)";
+		}
+	    }
+	    print FOUT ', ' unless $_ eq $#$res;
+	}
+	print FOUT ");\n";
+	last if $num_rows && $count >= $num_rows;
+	return(0) if $sigintcaught; #pseudo sig handle
+    }
+    return(0) if $sigintcaught; #pseudo sig handle
+
+    # If we didn't get any rows back, then the query was probably an insert or
+    # update, so we call format_affected
+    if($count <= 0 && !$isselect) {
+	return($sth->rows(), 'affected');
+    }
+    return($count, 'selected');
+  } else {
+    die("Invalid format: $format");
+  }
+}    
+
+sub format_affected {
+  my($rows_affected, $success_code) = @_;
+  debugmsg(3, "format_affected called", @_);
+  # This just outputs the given number
+
+  return("$rows_affected row" . ($rows_affected == 1 ? '' : 's')
+        ." $success_code");
+}
+
+sub statusline {
+  my($num, $max) = @_;
+  debugmsg(3, "statusline called", @_);
+  my $linewidth;
+  eval q{
+    use Term::ReadKey;
+    (\$linewidth) = GetTerminalSize();
+  };
+  if($@) {
+    $linewidth = 80;
+  }
+  my $numwidth = length($num);
+  my $maxwidth = length($max);
+  my $width = $linewidth - $numwidth - $maxwidth - 9;
+
+  my $fillnum = (($num / $max) * $width);
+  my $spacenum = ((($max - $num) / $max) * $width);
+
+  if($fillnum =~ /\./) {
+    $fillnum = int($fillnum) + 1;
+  }
+
+  if($spacenum =~ /\./) {
+    $spacenum = int($spacenum);
+  }
+
+  my $fill = ('*' x $fillnum);
+  my $space = ('-' x $spacenum);
+  my $pcnt = sprintf("%.0d", ($num / $max * 100));
+
+  return(sprintf("%-" . $linewidth . "s", "$num/$max [" . $fill . $space . "] $pcnt\%") . "\r");
+}
+
+sub statusprint {
+  my($string) = @_;
+
+  return("\r[K$string\n");
+}
+
+sub ping {
+  debugmsg(3, "ping called", @_);
+  if(!$dbh) {
+    return(0);
+  } else {
+    # install alarm signal handle
+    $SIG{ALRM} = \&sighandle;
+    debugmsg(2, "Setting alarm for ping ($conf{connection_timeout} seconds)");
+    alarm($conf{connection_timeout});
+
+    debugmsg(2, "Pinging...");
+    if($dbh->ping()) {
+      debugmsg(2, "Ping successfull");
+      alarm(0); # cancel alarm
+      return(1);
+    } else {
+      debugmsg(2, "Ping failed");
+      alarm(0); # cancel alarm
+      db_reconnect();
+      return(0);
+    }
+  }
+  alarm(0); # cancel alarm
+}
+
+sub query_err {
+  my($query_type, $msg, $query) = @_;
+  debugmsg(3, "query_err called", @_);
+  # outputs a standard query error.  does not exit
+  # input: $query_type, $msg, $query
+
+  chomp($query_type);
+  chomp($msg);
+  chomp($query);
+
+  print STDERR "\n";
+  print STDERR "$msg\n";
+  print STDERR "Query: $query\n" if $query && $conf{sql_query_in_error};
+  print STDERR "\n";
+}
+
+sub err {
+  my($msg) = @_;
+  debugmsg(3, "err called", @_);
+  # outputs an error message and exits
+
+  print "Error: $msg\n";
+  quit(1);
+}
+
+sub soft_err {
+  my($msg) = @_;
+  debugmsg(3, "soft_err called", @_);
+  # outputs a error, but doesn't exit
+
+  print "\nError: $msg\n\n";
+}
+
+sub wrn {
+  my($msg) = @_;
+  debugmsg(3, "wrn called", @_);
+  # outputs a warning
+
+  print STDERR "Warning: $msg\n";
+}
+
+sub quit {
+  my($exitcode, $force_quit, $msg) = @_;
+  debugmsg(3, "quit called", @_);
+  # just quits
+  $exitcode   ||= 0;
+  $force_quit ||= 0; # Set this to 1 to try a smoother force quit
+  $msg        ||= '';
+
+  setup_sigs();
+
+  print "$msg" if $msg && $msg != "";
+  $quitting = 1;
+
+  if($force_quit) {
+    exit($exitcode);
+  }
+  
+  commit_on_exit();
+
+  # disconnect the database
+  debugmsg(1, "disconnecting from database");
+  $dbh->disconnect() if defined $dbh;
+
+  debugmsg(1, "exiting with exitcode: [$exitcode]");
+  exit($exitcode);
+}
+
+sub commit_on_exit {
+  debugmsg(3, "commit_on_exit called", @_);
+
+  # Commit... or not
+  if($conf{commit_on_exit} && defined $dbh && !$dbh->{AutoCommit}) {
+    # do nothing, oracle commits on disconnect
+  } elsif(defined $dbh && !$dbh->{AutoCommit}) {
+    print "Rolling back any outstanding transaction...\n";
+    $dbh->rollback();
+  }
+}
+
+sub debugmsg {
+  my($debuglevel, @msgs) = @_;
+  if($opt_debug >= $debuglevel ) {
+    my @time = localtime();
+    my $time = sprintf("%.4i-%.2i-%.2i %.2i:%.2i:%.2i", $time[5] + 1900,
+                       $time[4] + 1, $time[3], $time[2], $time[1], $time[0]);
+    print STDERR "$time $debuglevel [" . join("] [", @msgs) . "]\n";
+  }
+}
+
+sub usage {
+  my($exit) = @_;
+  debugmsg(3, "usage called", @_);
+
+  $exit ||= 0;
+
+  print <<_EOM_;
+Usage: yasql [options] [logon] [AS {SYSDBA|SYSOPER}] [@<file>[.ext]
+         [<param1> <param2> ...]]
+Logon: <username>[/<password>][@<connect_string>] | /
+Options:
+  -d, --debug=LEVEL            Turn debugging on to LEVEL
+  -H, --host=HOST              Host to connect to
+  -p, --port=PORT              Host port to connect to
+  -s, --sid=SID                Oracle SID to connect to
+  -h, -?, --help               This help information
+  -A, --nocomp                 Turn off building the auto-completion list
+  -b, --bench, --benchmark     Display extra benchmarking info
+  -v, --version                Print version and exit
+  -B, --batch                  Batch mode (no headers, etc.)
+
+See the man pages for more help.
+_EOM_
+  
+  exit(1) if $exit;
+}
+
+sub help {
+  debugmsg(3, "help called", @_);
+  # This just outputs online help
+  
+  my $help = <<_EOM_;
+
+Commands:
+  help                This screen
+  quit, exit, \\q      Exit the program.
+  !<cmd>, host <cmd>  Sends the command directly to a shell.
+  \\A                  Regenerate the auto-completion list.
+  connect [logon] [AS {SYSDBA|SYSOPER}]
+                       Open new connection.
+                        login = <username>[/<password>][@<connect_string>] | /
+  reconnect, \\r       Reconnect to the database
+  desc[ribe] <object> Describe table, view, index, sequence, primary key, 
+                        foreign key, constraint or trigger
+                        object = [<schema>.]<object>[\@dblink]
+  show [all] <string> Shows [all] objects of a certain type
+                        string = tables, views, objects, sequences, clusters,
+                                 dimensions, functions, procedures, packages,
+                                 indexes, indextypes, libraries, snapshots
+                                 materialized views, synonyms, triggers,
+  show <string> on|for <object>
+                      Shows properties for a particular object
+                        string = indexes, constraints, keys, checks, triggers,
+                                 query
+  show processes      Shows logged in users
+  show [all] waits    Shows [all] waits
+  show plan           Shows the last EXPLAIN PLAN ran
+  show errors         Shows errors from PL/SQL object creation
+  l[ist], \\l, \\p      List the contents of the current buffer
+  cl[ear] [buffer], \\c
+                      Clear the current buffer
+  ed[it] [filename], \\e [filename]
+                      Will open a text editor as defined by the EDITOR
+                        environment variable.  If a file is given as the
+                        argument, then the editor will be opened with that
+                        file.  If the given file does not exist then it will be
+                        created.  In both cases the file will not be deleted,
+                        and the current buffer will be overwritten by the
+                        contents of the file.  If no file is given, then the
+                        editor will be opened with a temporary file, which will
+                        contain the current contents of the buffer, or the last
+                        execute query if the buffer is empty.  After the editor
+                        quits, the file will be read into the buffer.  The
+                        contents will be parsed and executed just as if you had
+                        typed them all in by hand.  You can have multiple
+                        commands and/or queries.  If the last command is not
+                        terminated them you will be able to add furthur lines
+                        or input a terminator to execute the query.
+  \@scriptname           Execute all the commands in <filename> as if they were
+                          typed in directly.  All CLI commands and queries are
+                          supported.  yasql will quit after running all
+                          commands in the script.
+  debug [num]           Toggle debuggin on/off or if <num> is specified, then
+                          set debugging to that level
+  autocommit            Toggle AutoCommit on/off
+
+Queries:
+  All other input is treated as a query, and is sent straight to the database.
+
+  All queries must be terminated by one of the following characters:
+    ;  - Returns data in table form
+    /  - Returns data in table form
+    \\g - Returns data in non-aligned list form
+    \\G - Returns data in aligned list form
+    \\s - Returns data in CSV form.  The first line is the column names
+    \\S - Returns data in CSV form, but no column names
+    \\i - Returns data in sql select commands form
+
+  You may re-run the last query by typing the terminator by itself.
+
+  Example:
+    user\@ORCL> select * from table;
+    user\@ORCL> \\g
+
+Return limit:
+  You may add a number after the terminator, which will cause only the
+  first <num> rows to be returned.  e.g. 'select * from table;10' will run
+  the query and return the first 10 rows in table format.  This will also work
+  if you just type the terminator to rerun the last query.
+
+  Examples:
+    The following will run the query, then run it again with different settings:
+      user\@ORCL> select * from table;10
+      user\@ORCL> \G50
+  
+Redirection:
+  You can add a shell like redirection operator after a query to pipe the output
+  to or from a file.
+  
+  Output:
+    You can use either '>' or '>>' to output to a file.  '>' will overwrite the
+    file and '>>' will append to the end of the file.  The file will be created
+    if it does not exist.
+
+    Examples:
+      user\@ORCL> select * from table; > table.dump
+      user\@ORCL> select * from table\S > table.csv
+
+  Input:
+    You can use '<' to grab data from a CSV file.  The file must be formatted
+    with comma delimiters, quoted special fields, and rows seperated by
+    newlines.  When you use this operator with a query, the query will be ran
+    for every line in the file.  Put either '?' or ':n' (n being a number)
+    placeholders where you want the data from the CSV file to be interpolated.
+    The number of placeholders must match the number of columns in the CSV file.
+    Each query is run as if you had typed it in, so the AutoCommit setting 
+    applies the same.  If there is an error then the process will stop, but no 
+    rollback or anything will be done.
+
+    Examples:
+      user\@ORCL> insert into table1 values (?,?,?); < table1.csv
+      user\@ORCL> update table2 set col1 = :1, col3 = :3, col2 = :2; < table2.csv
+
+Piping
+  You can pipe the output from a query to the STDIN of any program you wish.
+
+  Examples:
+    user\@ORCL> select * from table; | less
+    user\@ORCL> select * from table; | sort -n
+
+Please see 'man yasql' or 'perldoc yasql' for more help
+_EOM_
+ 
+  my $ret = open(PAGER, "|$conf{pager}");
+  if($ret) {
+    print PAGER $help;
+    close(PAGER);
+  } else {
+    print $help;
+  }
+}
+
+__END__
+
+=head1 NAME
+
+yasql - Yet Another SQL*Plus replacement
+
+=head1 SYNOPSIS
+
+B<yasql> [options] [logon] [@<file>[.ext] [<param1> <param2>]
+
+=over 4
+
+=item logon
+
+<I<username>>[/<I<password>>][@<I<connect_string>>] | /
+
+=item options
+
+=over 4
+
+=item -d I<debuglevel>, --debug=I<debuglevel>
+
+Turn debuggin on to I<debuglevel> level.  Valid levels: 1,2,3,4
+
+=item -H I<hostaddress>, --host=I<hostaddress>
+
+Host to connect to
+
+=item -p I<hostport>, --port=I<hostport>
+
+Host port to connect to
+
+=item -s I<SID>, --sid=I<SID>
+
+Oracle SID to connect to
+
+=item -h, -?, --help
+
+Output usage information and quit.
+
+=item -A, --nocomp
+
+Turn off the generation of the auto-completion list at startup.  Use This if 
+it takes too long to generate the list with a large database.
+
+=item -b, --bench, --benchmark
+
+Turn on extended benchmark info, which includes times and CPU usages for both
+queries and formatting.
+
+=item -v, --version
+
+Print version and exit
+
+=back
+
+=item Examples
+
+=over 4
+
+=item Connect to local database
+
+=over 4
+
+=item yasql
+
+=item yasql user
+
+=item yasql user/password
+
+=item yasql user@LOCAL
+
+=item yasql user/password@LOCAL
+
+=item yasql -h localhost
+
+=item yasql -h localhost -p 1521
+
+=item yasql -h localhost -p 1521 -s ORCL
+
+=back
+
+=item Connect to remote host
+
+=over 4
+
+=item yasql user@REMOTE
+
+=item yasql user/password@REMOTE
+
+=item yasql -h remote.domain.com
+
+=item yasql -h remote.domain.com -p 1512
+
+=item yasql -h remote.domain.com -p 1512 -s ORCL
+
+=back
+
+=back
+
+=back
+
+If no connect_string or a hostaddress is given, then will attempt to connect to
+the local default database.
+
+=head1 DESCRIPTION
+
+YASQL is an open source Oracle command line interface.  YASQL features a much
+kinder alternative to SQL*Plus's user interface.  This is meant to be a
+complete replacement for SQL*Plus when dealing with ad hoc queries and general
+database interfacing.  It's main features are:
+
+=over 4
+
+=item Full ReadLine support
+
+Allows the same command line style editing as other ReadLine enabled programs
+such as BASH and the Perl Debugger.  You can edit the command line as well as
+browse your command history.  The command 
+history is saved in your home directory in a file called .yasql_history.  You 
+can also use tab completion on all table and column names.
+
+=item Alternate output methods
+
+A different style of output suited to each type of need.  There are currently
+table, list and CSV output styles.  Table style outputs in the same manner as 
+SQL*Plus, except the column widths are set based on the width of the data in 
+the column, and not the column length defined in the table schema.  List outputs
+each row on it's own line, column after column for easier viewing of wide return
+results.  CSV outputs the data in Comma Seperated Values format, for easy
+import into many other database/spreadsheet programs.
+
+=item Output of query results
+
+You can easily redirect the output of any query to an external file
+
+=item Data Input and Binding
+
+YASQL allows you to bind data in an external CSV file to any query, using
+standard DBI placeholders.  This is the ultimate flexibility when inserting or
+updating data in the database.
+
+=item Command pipes
+
+You can easily pipe the output of any query to an external program.
+
+=item Tab completion
+
+All tables, columns, and other misc objects can be completed using tab, much
+like you can with bash.
+
+=item Easy top rownum listings
+
+You can easily put a number after a terminator, which will only output those
+number of lines.  No more typing "where rownum < 10" after every query.  Now
+you can type 'select * from table;10' instead.
+
+=item Enhanced Data Dictionary commands
+
+Special commands like 'show tables', 'desc <table>', 'show indexes on <table>',
+'desc <sequence>', and many many more so that you can easily see your schema.
+
+=item Query editing
+
+You can open and edit queries in your favorite text editor.
+
+=item Query chaining
+
+You can put an abitrary number of queries on the same line, and each will be
+executed in turn.
+
+=item Basic scripting
+
+You can put basic SQL queries in a script and execute them from YASQL.
+
+=item Config file
+
+You can create a config file of options so that you don't have to set them
+everytime you run it.
+
+=item Future extensibility
+
+We, the community, can modify and add to this whatever we want, we can't do that
+with SQL*Plus.
+
+=back
+
+=head1 REQUIREMENTS
+
+=over 4
+
+=item Perl 5
+
+This was developed with Perl 5.6, but is known to work on 5.005_03 and above.
+Any earlier version of Perl 5 may or may not work.  Perl 4 will definately not
+work.
+
+=item Unix environment
+
+YASQL was developed under GNU/Linux, and aimed at as many Unix installations as 
+possible.  Known to be compatible with GNU/Linux, AIX and Sun Solaris.
+Please send me an email (qzy@users.sourceforge.net) if it works for other platforms.
+I'd be especially interested if it worked on Win32.
+
+=item Oracle Server
+
+It has been tested and developed for Oracle8 and Oracle8i.  There is atleast
+one issue with Oracle7 that I know of (see ISSUES below) and I have not tested
+it with Oracle9i yet.
+
+=item Oracle client libraries
+
+The Oracle client libraries must be installed for DBD::Oracle.  Of course you
+can't install DBD::Oracle without them...
+
+=item DBD::Oracle
+
+DBD::Oracle must be installed since this uses DBI for database connections.
+
+=item ORACLE_HOME
+
+The ORACLE_HOME environment variable must be set if you use a connection 
+descriptor to connect so that YASQL can translate the descriptor into 
+usefull connection information to make the actual connection.
+
+=item ORACLE_SID
+
+The ORACLE_SID environment variable must be set unless you specify one with the 
+-s option (see options above).
+
+=item Term::Readline
+
+Term::Readline must be installed (it is with most Perl installations), but more 
+importantly, installing Term::ReadLine::Gnu from CPAN will greatly enhance the 
+usability.
+
+=item Time::HiRes
+
+This is used for high resolution benchmarking.  It is optional.
+
+=item Text::CSV_XS
+
+This perl module is required if you want to output CSV or input from CSV files.
+If you don't plan on using this features, then you don't need to install this
+module.
+
+=item Term::ReadKey
+
+This module is used for better input and output control.  Right now it isn't
+required, but some parts of YASQL will look and function better with this
+installed.
+
+=back
+
+=head1 CONFIG
+
+YASQL will look for a config file first in ~/.yasqlrc then 
+/etc/yasql.conf.  The following options are available:
+
+=over 4
+
+=item connection_timeout = <seconds>
+
+Timeout for connection attempts
+
+Default: 20
+
+=item max_connection_attempts = <num>
+
+The amount of times to attempt the connection if the username/password are wrong
+
+Default: 3
+
+=item history_file = <file>
+
+Where to save the history file.  Shell metachars will be globbed (expanded)
+
+Default: ~/.yasql_history
+
+=item pager = <file>
+
+Your favorite pager for extended output. (right now only the help command)
+
+Default: /bin/more
+
+=item auto_commit = [0/1]
+
+Autocommit any updates/inserts etc
+
+Default: 0
+
+=item commit_on_exit = [0/1]
+
+Commit any pending transactions on exit.  Errors or crashes will still cause
+the current transaction to rollback.  But with this on a commit will occur
+when you explicitly exit.
+
+Default: 0
+
+=item long_trunc_ok = [0/1]
+
+Long truncation OK.  If set to 1 then when a row contains a field that is
+set to a LONG time, such as BLOB, CLOB, etc will be truncated to long_read_len
+length.  If 0, then the row will be skipped and not outputted.
+
+Default: 1
+
+=item long_read_len = <num_chars>
+
+Long Read Length.  This is the length of characters to truncate to if 
+long_trunc_ok is on
+
+Default: 80
+
+=item edit_history = [0/1]
+
+Whether or not to put the query edited from the 'edit' command into the
+command history.
+
+Default: 1
+
+=item auto_complete = [0/1]
+
+Whether or not to generate the autocompletion list on connection.  If connecting
+to a large database (in number of tables/columns sense), the generation process
+could take a bit. For most databases it shouldn't take long at all though.
+
+Default: 1
+
+=item extended_complete_list = [0/1]
+
+extended complete list will cause the possible matches list to be filled by
+basicly any and all objects.  With it off the tab list will be restricted to
+only tables, columns, and objects owned by the current user.
+
+Default: 0
+
+=item complete_tables = [0/1]
+
+This controls whether or not to add tables to the completion list.  This does
+nothing if auto_complete is set to 0.
+
+Default: 1
+
+=item complete_columns = [0/1]
+
+This controls whether or not to add columns to the completion list.  This does
+nothing if auto_complete is set to 0.
+
+Default: 1
+
+=item complete_objects = [0/1]
+
+This controls whether or not to add all other objects to the completion list.
+This does nothing if auto_complete is set to 0. (Hint... depending on your
+schema this will include tables and columns also, so you could turn the other
+two off)
+
+Default: 1
+
+=item extended_benchmarks = [0/1]
+
+Whether or not to include extended benchmarking info after queries.  Will 
+include both execution times and CPU loads for both the query and formatting
+parts of the process.
+
+Default: 0
+
+=item prompt
+
+A string to include in the prompt.  The prompt will always be suffixed by a
+'>' string.  Interpolated variables:
+ %H = connected host.  will be prefixed with a '@'
+ %U = current user
+
+Default: %U%H
+
+=item column_wildcards = [0/1]
+
+Column wildcards is an extremely experimental feature that is still being
+hashed out due to the complex nature of it.  This should affect only select
+statements and expands any wildcards (*) in the column list.  such as
+'select col* from table;'.
+
+Default: 0
+
+=item sql_query_in_error = [0/1]
+
+This this on to output the query in the error message.
+
+Default: 0
+
+=item nls_date_format = <string>
+
+Set the preferred NLS_DATE_FORMAT.  This effects both date input and output
+formats.  The default is ISO standard (YYYY-MM-DD HH24:MI:SS', not oracle
+default (YYYY-MM-DD).
+
+Default: YYYY-MM-DD HH24:MI:SS
+
+=item fast_describe
+
+Turn on fast describes.  These are much faster than the old style of desc
+<table>, however non-built in datatypes may not be returned properly.  i.e. a
+FLOAT will be returned as a NUMBER type.  Internally FLOATs really are just
+NUMBERs, but this might present problems for you.  If so, set this to 0
+
+Default: 1
+
+=back
+
+=head1 ISSUES
+
+=over 4
+
+=item Oracle7
+
+DBD::Oracle for Oracle8 may have issues connecting to an Oracle7 database.  The
+one problem I have seen is that the use of placeholders in a query will cause
+oracle to issue an error "ORA-01008: not all variables bound".  This will affect
+all of the hard-coded queries that I use such as the ones for the 'desc' and
+'show' commands.  The queries that you type in on the command line may still
+work.  The DBD::Oracle README mentions the use of the '-8' option to the
+'perl Makefile.PL' command to use the older Oracle7 OCI.  This has not been
+tested.
+
+=back
+
+=head1 AUTHOR
+
+Originaly written by Nathan Shafer (B<nshafer@ephibian.com>) with support from
+Ephibian, Inc.  http://www.ephibian.com
+Now it is mostly developed and maintained by Balint Kozman
+(B<qzy@users.sourceforge.net>).  http://www.imind.hu
+
+=head1 THANKS
+
+Thanks to everyone at Ephibian that helped with testing, and a special thanks
+to Tom Renfro at Ephibian who did a lot of testing and found quite a few 
+doozies.
+Also a lot of thanks goes to the mates at iMind.dev who keep suffering from
+testing new features on them.
+
+The following people have also contributed to help make YASQL what it is:
+Allan Peda, Lance Klein, Scott Kister, Mark Dalphin, Matthew Walsh
+
+And always a big thanks to all those who report bugs and problems, especially
+on other platforms.
+
+=head1 COPYRIGHT
+
+Copyright (C) 2000-2002 Ephibian, Inc., 2005 iMind.dev.
+
+
+=head1 LICENSE
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+
+=head1 TODO
+
+=over 4
+
+=item desc a synomym doesn't keep the right schema... I think.  Saw in desc parking.customer when logged in as cccrsmgr in 3c db
+
+=item allow history to be saved based on host (as an option)
+
+=item make stifle_history a configurable option
+
+=item a row is printed after "Attempting to cancel query"
+
+=item reading from a script will not change prompt properly (for a script with no terminator)
+
+=item NULL stops printing after table goes into overflow or something
+
+=item extra space in \G... maybe others
+
+=item bug: tag completion doesn't work with caps anymore
+
+=item Add support for /NOLOG
+
+=item allow dblinks in show blah on blah commands
+
+=item show query doesn't work with schemas and db links
+
+=item add save and get buffer commands 
+
+=item add R[UN] command (/ equivilent)
+
+=item add support for just 'connect' and prompt for username and password
+
+=item add PASSW[ORD] command for changing password
+
+=item add -s[ilent] command line to suppress all startup output and command prompts
+
+=item add 'start' command for scripting
+
+=item add 'run' synonum for '/'
+
+=item add 'show parameters <filter>' support
+
+=item fix segfaults when cancelling large outputs
+
+=item Add a 'SPOOL' command
+
+=item fix 'set...' commands
+
+=item Add variable bindings, prompting, control structures, etc.
+
+=item be able to describe any kind of object
+
+=item Add 'startup queries' in config file or support glogin.sql and login.sql
+
+=item fix case sensitive object names
+
+=item make win32 compliant
+
+=item add better error messages when the user can't access a data dictionary
+table
+
+=item add better error output, with line/col numbers and maybe a pointer.
+
+=item add chained ops, exactly like bash
+
+=item add plugins and hooks for all aspects.
+
+=item Add smarter tables and wrapping in columns.  Also add configurable max
+column widths and max table width.
+
+=item Add a curses interface option for easy viewing and scrolling, etc.  This
+will require some research to determine if it's even worth it.
+
+=item Add HTML output option
+
+=back
+
+=head1 CHANGELOG
+
+$Log: yasql,v $
+Revision 1.83  2005/05/09 16:57:13  qzy
+Fixed the 'DECIMAL' problem with describe command.
+Added sql mode with \i (patch by Ed Avis).
+Added redirectors (>, >>, |) to describe.
+Added 'show user' command.
+Added 'show uid' command.
+Added new makefile targets: clean, check. (patch by Ed Avis)
+Added "and owner = ?" to some show targets (patch by anonymous).
+Added command_complete_list feature and config option.
+Added disconnect command
+Added command completion: select, update, insert, delete, execute, etc.
+Added table.column name completion.
+Added feature to run tty-less (patch by Michael Kroell).
+Added a workaround for SunOS's alarm() bug (patch by Ed Avis).
+Fixed some minor issues in parser code.
+
+Revision 1.82  2005/02/18 16:57:13  qzy
+Added batch mode (ewl patch).
+Allow connections AS SYSDBA, AS SYSOPER and internal (sysdba patch by Derek Whayman).
+Added server_output to config options.
+Changed script execution to only add script lines to the query buffer (and not to history).
+
+Revision 1.81  2002/03/06 21:55:13  nshafer
+Fixed bug with password prompt.
+Added 'show plan' for outputting last explain plan results.
+Added 'show query' for viewing queries for views and materialized views.
+Optimized describes to be as fast as describes in SQL*Plus.
+Added new option 'fast_describe' on by default for new describe method.
+Added single_output as a formatting option for internal use.
+Fixed problem with password, quit, exit, \q getting added to the history list.
+Changed history to not add duplicate entries right next to each other.
+Added support for basic (non-returning) PL/SQL commands.
+Added support for create function, package, package body, prodedure, trigger.
+Added 'show errors' command
+Added 'conn' shortcut for 'connection'.
+Added 'exec[ute]' command.
+Added 'set serverout[put] on|off' command to mimic SQL*Plus's.
+Added alarms to pings in cases where DB connection is dropped and ping hangs.
+Cleaned up error messages.
+Renamed config options AutoCommit, CommitOnExit, LongTruncOk, and LongReadLen toauto_commit, commit_on_exit, long_trunc_ok, and long_read_len.  Old names are now deprecated.
+Changed quote escaping to be '' and "" instead of \' and \".
+Added full support for comments: rem[ark], --, and /* */.
+Right-justify works for the '8' datatype as well as '3' now.
+Re-worked debug output levels.
+Optimized query for completion lists a bit.
+Added completion-list limiting based on location in some DML statements (select, update, insert).
+Fixed up the display of '...' when generating tab completion list.  Should work a lot better when hitting tab in the middle of the line.
+Added show views, objects, sequences, clusters, dimensions, functions, procedures, packages, indexes, indextypes, libraries, materialized views, snapshots, synonyms, triggers.
+Added show all <objects> command.
+Added type and owner columns to show commands.
+Fixed commit_on_exit logic.
+Added ability to use external authentication ('yasql /').
+The .sql extension for the scripting and editing commands are now optional.
+Fixed up editor execution to hopefully find the editor better.
+Added "Command" entry to "show processes".
+Added "show waits" and "show all waits" commands.
+Re-organized command line usage in anticipation for script parameters.
+Removed all uses of 'stty'.
+Added processing of STDIN, so redirects and pipes to YASQL work now.
+Changed benchmarking to include time for fetching... this should work better with Oracle 7.x, which doesn't seem to execute the query until you try fetching
+Updated documentation.
+Fixed up alarm() calls.
+Fixed setting of NLS_DATE_FORMAT to apply on reconnects.
+Broke commands into 2 sets... ones that exectute any time, and ones that execute only when nothing is in the buffer
+Fixed printing of text read in from an edit command.  It now echoes all of it.
+Now ignoring most SET commands so we don't tack them onto queries
+Fixed permissions in tarball
+
+Revision 1.80  2001/08/01 18:06:27  nshafer
+Fixed bug with delayed $term initialization
+
+Revision 1.79  2001/08/01 17:52:35  nshafer
+Fixed compatibility issues with the data dictionary in Oracle 7.  Fixed ordering
+of indexes for compound indexes.  Fixed display of objects from other schemas
+in some data dictionary commands such as 'show indexes on table'.  (Thanks Nix)
+Fixed matching of declare and end in query string.  Will not only match if on
+blank line.  Fixed matching of '/' terminator in middle of queries.  Will now
+only match if at end of line (Thanks Wesley Hertlein).  Temp file for editing
+now appends '.sql' to end of temp file so that editors, like vim, automatically
+turn on syntax highlighting.  Added searching of environment variable SQLPATH
+when looking for scripts.  Terminal setup is now after script parsing, so that
+it will work when run under cron (Thanks David Zverina).
+
+Revision 1.78  2001/07/05 13:52:56  nshafer
+Fixed bug where parens were matching improperly.
+
+Revision 1.77  2001/07/04 02:57:08  nshafer
+Fixed bug where terminators wouldn't match if they were the next character
+after a quote character.
+
+Revision 1.76  2001/06/28 04:17:53  nshafer
+Term::ReadLine::Perl now supported, for what little functionality it does
+provide.  Fixed segfault when hitting up when history is empty.  Fixed bug
+when providing script names on command line (Thanks to Dave Zverina.)
+Rewrote the query parser to fix a bug, caused by the multiple-queries-on-one-
+line feature, that causes terminators, such as ';' and '/' to match when in
+quotes.  When hitting tab on a line starting with a '@' for scripts, tab will
+now complete filenames and not database objects.  Fixed DB timeout when
+prompting for username and password.  Added support for 'DECLARE' keyword,
+however this does not mean that variable binding in PL/SQL blocks works yet.
+Sped up startup time a bit more (hopefully).
+
+Revision 1.75  2001/06/19 16:02:16  nshafer
+Fixed typo in error message for Term::ReadLine::Gnu
+Fixed crash when tab hit at username or password prompt
+Added -- as a comment type and fixed case where comment in quotes would
+match. (Mark Dalphin)
+Fixed 'desc' to also describe partitioned tables (Erik)
+
+Revision 1.74  2001/06/18 21:07:55  nshafer
+Fixed bug where / would not rerun last query (thanks Scott Kister)
+
+Revision 1.73  2001/05/23 18:35:17  nshafer
+Got rid of "Prototype mismatch" errors.  Fixed typo in extended benchmarks
+
+Revision 1.72  2001/05/22 16:06:36  nshafer
+Fixed bug with error messages not displaying first time, and fixed bug with
+tab completion output
+
+Revision 1.71  2001/05/17 21:28:40  nshafer
+New CSV output format.  Added CSV file input on any query.  Added ability to
+pipe query results to any program.  Added ability for multiple queries on one
+line.  Changed tab completion generator to run first time you hit tab instead
+of on startup, which speeds up database connection.  Now using SelfLoader to
+speed up loading and minimize memory use.  Added a 'show plan for ____' command
+for easy display of explain plan output.  Query times are now more readable
+and will split into weeks, days, hours, minutes, and seconds.  Hopefully fixed
+some problems with stty and Solaris 2.4.  Added support for 'rem' comments in
+scripts.  Redirection output files are now shell expanded.
+
+Revision 1.70  2001/05/08 17:49:51  nshafer
+Fixed all places where a non-alphanumeric object name would break or not
+match.
+Added code for autoconf style installs.
+
+Revision 1.69  2001/05/07 23:47:47  nshafer
+fixed type
+
+Revision 1.68  2001/05/07 22:26:20  nshafer
+Fixed tab completion problems when completing objects with a $ in their name.
+Added config options complete_tables, complete_columns, and complete_objects,
+Added redirection of query output to file.  Hopefully sped up exiting.
+Updated documentation.
+
+Revision 1.67  2001/05/04 17:35:04  nshafer
+YASQL will now suspend properly back to the shell when SIGTSTP is sent, as in
+when you hit ctrl-z on most systems.  Added NLS_DATE_FORMAT setting in config
+file to support alter date views.  Defaults to ISO standard.  YASQL will now
+attempt to change it's process name, such as when viewed in ps or top.  This
+will not work on all systems, nor is it a complete bullet proof way to hide
+your password if you provide it on the command line.  But it helps to not
+make it so obvious to regular users.  Scripts entered on the command line are
+now checked to be readable before attempting connection.  A failed 'connect
+command will no long alter the prompt.  Added \p option for printing the
+current buffer, ala psql.  Large query results (over 1000 rows) are now
+handled MUCH better.  YASQL will no longer try to hold more than 1000 rows in
+memory, which keeps it from sucking memory, and also improves the speed.
+When a query does return more than 1000 rows in table mode, those first 1000
+will determine the column widths, and all rows after that will get truncated.
+AIX has been reported to run YASQL perfectly.
+
+Revision 1.66  2001/03/13 21:34:58  nshafer
+There are no longer any references to termcap, so yasql should now work on
+termcap-less systems such as Debian Linux and AIX
+
+Revision 1.65  2001/03/12 17:44:31  nshafer
+Restoring the terminal is hopefully more robust and better now.  YASQL now
+tries to use the 'stty' program to dump the settings of the terminal on
+startup so that it can restore it back to those settings.  It requires that
+stty is installed in the path, but that should be the case with most systems.
+Also made the output of the query in the error message an option that is off
+by default.  I had never meant to include that in the final release, but kept
+on forgetting to take it out.
+
+Revision 1.64  2001/03/06 16:00:33  nshafer
+Fixed bug where desc would match anytime, even in middle of query, which is
+bad.
+
+Revision 1.63  2001/03/01 17:30:26  nshafer
+Refined the ctrl-c process for not-so-linuxy OS's, namely solaris.  Now
+stripping out Dos carriage returns since SQL*Plus seems to.
+
+Revision 1.62  2001/02/26 22:39:12  nshafer
+Fixed bug where prompt would reset itself when a blank line was entered.
+Added script argument on command line (Lance Klein)
+Added support for any command line commands in the script (Lance Klein)
+The 'desc' and 'show' commands no longer require a terminator (like ;) as long as the whole statement is on one line (Lance Klein)
+Added option 'extended_tab_list' for a much bigger, more complete tab listing (Lance Klein)
+The edit command is no longer limited to 1 query at a time.  You can now put any valid command or query, and as many of them as you want.  The parsing rules for the edit command is exactly identical to the script parsing.
+cleaned up documentation a bit
+
+Revision 1.61  2001/01/31 19:56:22  nshafer
+changed CommitOnExit to be 1 by default, to emulate SQL*Plus behavior, and
+at popular request
+
+Revision 1.60  2001/01/29 16:38:17  nshafer
+got rid of (tm)
+
+Revision 1.59  2001/01/29 16:28:22  nshafer
+Modified docs a little with the new scope of open source now in the mix.
+
+Revision 1.58  2001/01/24 15:27:00  nshafer
+cleanup_after_signals is not in the Term::ReadLine::Stub, so it would
+output error messages on systems without Term::ReadLine::Gnu.  Fixed
+
+Revision 1.57  2001/01/17 23:26:53  nshafer
+Added Tom Renfro's column_wildcard expansion code.  New conf variable:
+column_wildcards.  0 by default until this code is expanded on a bit more.
+
+Revision 1.56  2001/01/17 23:00:25  nshafer
+Added CommitOnExit config, 0 by default.  Added info output at startup and
+when a new connection is initiated about the state of AutoCommit and
+CommitOnExit.  Also added statement about explicit rollback or commit when
+disconnecting.  Added warning message to commit_cmd and rollback_cmd if
+AutoCommit is on.  Now explicitly committing or rolling back on disconnect,
+it is no longer left up to the DBI's discretion... except in abnormal
+termination.
+
+Revision 1.55  2001/01/11 18:05:12  nshafer
+ Added trap for regex errors in tab completion (like if you put 'blah[' then
+hit tab)
+
+Revision 1.54  2001/01/10 17:07:22  nshafer
+added output to those last 2 commands
+
+Revision 1.53  2001/01/10 17:03:58  nshafer
+added commit and rollback commands so that you don't have to send them to the
+backend
+
+Revision 1.52  2001/01/10 16:00:08  nshafer
+fixed bug with prompt where on each call get_prompt would add another '@'.
+Thanks Tom
+
+Revision 1.51  2001/01/09 21:16:12  nshafer
+dar... fixed another bug where the %H would stay if there was no prompt_host
+
+Revision 1.50  2001/01/09 21:12:13  nshafer
+fixed bug with that last update.  Now it only interpolates the %H variable
+if there is something to interpolate it with
+
+Revision 1.49  2001/01/09 21:09:56  nshafer
+changed the %H variable to be prefixed with a @
+
+Revision 1.48  2001/01/09 21:04:36  nshafer
+changed 'default' to '' for the prompt's hostname when no connect_string is
+used
+
+Revision 1.47  2001/01/09 20:55:11  nshafer
+added configurable prompt and changed the default prompt
+
+Revision 1.46  2001/01/09 18:50:50  nshafer
+updated todo list
+
+Revision 1.45  2001/01/09 18:32:35  nshafer
+Added 'connect <connect_string>' command.  I may add the ability to specify
+options like on the command line (like '-H blah.com')
+
+Revision 1.44  2001/01/08 22:08:49  nshafer
+more documentation changes
+
+Revision 1.43  2001/01/08 20:51:31  nshafer
+added some documentation
+
+Revision 1.42  2001/01/08 20:09:35  nshafer
+Added debug and autocommit commands
+
+Revision 1.41  2001/01/08 18:12:43  nshafer
+added END handler to hopefully clean up the terminal better
+
+Revision 1.40  2001/01/05 23:29:38  nshafer
+new name!
+
+Revision 1.39  2001/01/05 18:00:16  nshafer
+Added config file options for auto completion generation and extended
+benchmark info
+
+Revision 1.38  2001/01/05 16:39:47  nshafer
+Fixed error where calling edit a second time would not open the file properly
+because of the way glob() works.
+
+Revision 1.37  2001/01/04 23:52:30  nshafer
+changed the version string to parse it out of the revision string (duh...)
+moved the prompting of username and password so that the check for the
+oracle_home variable happens before.  Before if you didn't have the environment
+variable set then it will prompt you for username and password, then die
+with the error, which is annoying
+fixed the quit calls so taht they properly erase the quit line from the
+history.  I had broken this a long time ago when I added the exit status
+param to the quit function
+Outputting in full table format (';' terminator) with a num_rows number
+(like ';100') would still cause the entire result set to be pulled into
+memory, which was really slow and could take a lot of memory if the table
+was large.  Fixed it so that it only pulls in num_rows number of rows when
+using the digit option
+
+Revision 1.36  2000/12/22 22:12:18  nshafer
+fixed a wrong-quote-type in the debug messages
+
+Revision 1.35  2000/12/22 22:07:06  nshafer
+forgot version... you know the drill...
+
+Revision 1.34  2000/12/22 21:57:01  nshafer
+Added config file support, queries from the 'edit' command are now entered
+into the command history (configurable), cleaned up the SIGINT actions quite
+a bit so they should work better now, added LongReadLen and LongTruncOk
+options so that LONG columns types won't mess up, added the number after terminator
+feature to limit how many rows are returned.
+
+Revision 1.33  2000/12/20 22:56:03  nshafer
+version number.... again.... sigh
+
+Revision 1.32  2000/12/20 22:55:32  nshafer
+added todo item, now in rpms
+
+Revision 1.31  2000/12/20 17:07:52  nshafer
+added the reprompt for username/password on error 1005 null password given
+
+Revision 1.30  2000/12/20 17:04:18  nshafer
+Refined the shadow_redisplay stuff.  Now I will only use my builtin function
+if the terminal type is set to "xterm" because that terminal type has a
+broken termcap entry.  Also set it to not echo when entering password if
+Term::ReadLine::Gnu is not installed
+
+Revision 1.29  2000/12/20 15:47:56  nshafer
+trying a new scheme for the shadow_redisplay.  Clear to EOL wasn't working
+Also fixed a few problems in the documentation
+.,
+
+Revision 1.28  2000/12/19 23:55:03  nshafer
+I need to stop forgetting the revision number...
+
+Revision 1.27  2000/12/19 23:48:49  nshafer
+cleaned up debugging
+
+Revision 1.26  2000/12/19 23:10:18  nshafer
+Lotsa new stuff... tab completion of table, column, and object names,
+improved signal handling, the edit command now accepts a filename parameter,
+new command 'show processes' which shows you info on who's connected,
+improved benchmark info, and a lot of other cleanup/tweaks
+
+Revision 1.25  2000/12/13 16:58:26  nshafer
+oops forgot documentation again
+
+Revision 1.24  2000/12/13 16:54:42  nshafer
+added desc <trigger>
+
+Revision 1.23  2000/12/12 17:52:15  nshafer
+updated todo list (oops, forgot)
+
+Revision 1.22  2000/12/12 17:51:39  nshafer
+added desc <index>
+
+Revision 1.21  2000/12/12 17:15:28  nshafer
+fixed bug when connecting using a host string (-H option)
+added a few more types to the 'show' and 'desc' commands
+
+Revision 1.20  2000/12/08 22:13:43  nshafer
+many little fixes and tweaks here and there
+
+Revision 1.19  2000/12/06 20:50:03  nshafer
+added scripting ability with "@<filename>" command
+changed all tabs to spaces!
+
+Revision 1.18  2000/12/06 19:30:38  nshafer
+added clear command
+refined connection process.  if invalid username/password entered then prompt again
+
+Revision 1.17  2000/12/05 22:20:58  nshafer
+Tightened up outputs.  Doesn't show column names if no rows selected, if
+it's not a select, then show number of rows affected
+
+Revision 1.16  2000/12/04 18:04:53  nshafer
+*** empty log message ***
+
+Revision 1.15  2000/12/04 18:03:14  nshafer
+fixed bug where the -H option was interpreted as -h or help.  All command
+line options are now case sensitive
+
+Revision 1.14  2000/12/04 17:54:38  nshafer
+Added list command (and \l and l)
+
+Revision 1.13  2000/12/04 17:34:18  nshafer
+fixed a formatting issue if Time::HiRes isn't installed
+
+Revision 1.12  2000/12/04 17:29:41  nshafer
+Added benchmark options to view the extended benchmark info.  Now it displays
+just the time in a more friendly format.  The old style is only active if the
+benchmark option is specified.
+Cleaned up some formatting issues
+Brought the usage and POD documentation up to date
+Added some items to the TODO
+
+Revision 1.11  2000/11/30 22:54:38  nshafer
+Fixed bug with the edit command where if you were 'inquotes' then you would
+stay in quotes even after editing the file
+
+Revision 1.10  2000/11/30 22:01:38  nshafer
+Fixed bug where username and password were added to the command history.
+Set it so that the quit commands are not added to the command history either.
+Added the 'edit' command and modified it's todo list item, as well as added
+it to the 'help' command
+
+Revision 1.9  2000/11/29 17:55:35  nshafer
+changed version from .21 to 1.0 beta 9.  I'll follow the revision numbers now
+
+Revision 1.8  2000/11/29 17:46:31  nshafer
+added a few items to the todo list
+
+Revision 1.7  2000/11/29 15:50:56  nshafer
+got rid of SID output at startup
+
+Revision 1.6  2000/11/29 15:49:51  nshafer
+moved revision info to $revision and added Id output
+
+Revision 1.5  2000/11/29 15:46:41  nshafer
+fixed revision number
+
+Revision 1.4  2000/11/29 15:44:23  nshafer
+fixed issue where environment variable ORACLE_SID overwrote explicit set
+on the command line.  now whatever you put on the command line will overwrite
+the environment variable
+
+=cut
+

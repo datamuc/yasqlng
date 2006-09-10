@@ -1,0 +1,806 @@
+NAME
+    yasql - Yet Another SQL*Plus replacement
+
+SYNOPSIS
+    yasql [options] [logon] [@<file>[.ext] [<param1> <param2>]
+
+    logon
+        <*username*>[/<*password*>][@<*connect_string*>] | /
+
+    options
+
+        -d *debuglevel*, --debug=*debuglevel*
+            Turn debuggin on to *debuglevel* level. Valid levels: 1,2,3,4
+
+        -H *hostaddress*, --host=*hostaddress*
+            Host to connect to
+
+        -p *hostport*, --port=*hostport*
+            Host port to connect to
+
+        -s *SID*, --sid=*SID*
+            Oracle SID to connect to
+
+        -h, -?, --help
+            Output usage information and quit.
+
+        -A, --nocomp
+            Turn off the generation of the auto-completion list at startup.
+            Use This if it takes too long to generate the list with a large
+            database.
+
+        -b, --bench, --benchmark
+            Turn on extended benchmark info, which includes times and CPU
+            usages for both queries and formatting.
+
+        -v, --version
+            Print version and exit
+
+    Examples
+
+        Connect to local database
+
+            yasql
+            yasql user
+            yasql user/password
+            yasql user@LOCAL
+            yasql user/password@LOCAL
+            yasql -h localhost
+            yasql -h localhost -p 1521
+            yasql -h localhost -p 1521 -s ORCL
+
+        Connect to remote host
+
+            yasql user@REMOTE
+            yasql user/password@REMOTE
+            yasql -h remote.domain.com
+            yasql -h remote.domain.com -p 1512
+            yasql -h remote.domain.com -p 1512 -s ORCL
+
+    If no connect_string or a hostaddress is given, then will attempt to
+    connect to the local default database.
+
+DESCRIPTION
+    YASQL is an open source Oracle command line interface. YASQL features a
+    much kinder alternative to SQL*Plus's user interface. This is meant to
+    be a complete replacement for SQL*Plus when dealing with ad hoc queries
+    and general database interfacing. It's main features are:
+
+    Full ReadLine support
+        Allows the same command line style editing as other ReadLine enabled
+        programs such as BASH and the Perl Debugger. You can edit the
+        command line as well as browse your command history. The command
+        history is saved in your home directory in a file called
+        .yasql_history. You can also use tab completion on all table and
+        column names.
+
+    Alternate output methods
+        A different style of output suited to each type of need. There are
+        currently table, list and CSV output styles. Table style outputs in
+        the same manner as SQL*Plus, except the column widths are set based
+        on the width of the data in the column, and not the column length
+        defined in the table schema. List outputs each row on it's own line,
+        column after column for easier viewing of wide return results. CSV
+        outputs the data in Comma Seperated Values format, for easy import
+        into many other database/spreadsheet programs.
+
+    Output of query results
+        You can easily redirect the output of any query to an external file
+
+    Data Input and Binding
+        YASQL allows you to bind data in an external CSV file to any query,
+        using standard DBI placeholders. This is the ultimate flexibility
+        when inserting or updating data in the database.
+
+    Command pipes
+        You can easily pipe the output of any query to an external program.
+
+    Tab completion
+        All tables, columns, and other misc objects can be completed using
+        tab, much like you can with bash.
+
+    Easy top rownum listings
+        You can easily put a number after a terminator, which will only
+        output those number of lines. No more typing "where rownum < 10"
+        after every query. Now you can type 'select * from table;10'
+        instead.
+
+    Enhanced Data Dictionary commands
+        Special commands like 'show tables', 'desc <table>', 'show indexes
+        on <table>', 'desc <sequence>', and many many more so that you can
+        easily see your schema.
+
+    Query editing
+        You can open and edit queries in your favorite text editor.
+
+    Query chaining
+        You can put an abitrary number of queries on the same line, and each
+        will be executed in turn.
+
+    Basic scripting
+        You can put basic SQL queries in a script and execute them from
+        YASQL.
+
+    Config file
+        You can create a config file of options so that you don't have to
+        set them everytime you run it.
+
+    Future extensibility
+        We, the community, can modify and add to this whatever we want, we
+        can't do that with SQL*Plus.
+
+REQUIREMENTS
+    Perl 5
+        This was developed with Perl 5.6, but is known to work on 5.005_03
+        and above. Any earlier version of Perl 5 may or may not work. Perl 4
+        will definately not work.
+
+    Unix environment
+        YASQL was developed under GNU/Linux, and aimed at as many Unix
+        installations as possible. Known to be compatible with GNU/Linux,
+        AIX and Sun Solaris. Please send me an email
+        (qzy@users.sourceforge.net) if it works for other platforms. I'd be
+        especially interested if it worked on Win32.
+
+    Oracle Server
+        It has been tested and developed for Oracle8 and Oracle8i. There is
+        atleast one issue with Oracle7 that I know of (see ISSUES below) and
+        I have not tested it with Oracle9i yet.
+
+    Oracle client libraries
+        The Oracle client libraries must be installed for DBD::Oracle. Of
+        course you can't install DBD::Oracle without them...
+
+    DBD::Oracle
+        DBD::Oracle must be installed since this uses DBI for database
+        connections.
+
+    ORACLE_HOME
+        The ORACLE_HOME environment variable must be set if you use a
+        connection descriptor to connect so that YASQL can translate the
+        descriptor into usefull connection information to make the actual
+        connection.
+
+    ORACLE_SID
+        The ORACLE_SID environment variable must be set unless you specify
+        one with the -s option (see options above).
+
+    Term::Readline
+        Term::Readline must be installed (it is with most Perl
+        installations), but more importantly, installing Term::ReadLine::Gnu
+        from CPAN will greatly enhance the usability.
+
+    Time::HiRes
+        This is used for high resolution benchmarking. It is optional.
+
+    Text::CSV_XS
+        This perl module is required if you want to output CSV or input from
+        CSV files. If you don't plan on using this features, then you don't
+        need to install this module.
+
+    Term::ReadKey
+        This module is used for better input and output control. Right now
+        it isn't required, but some parts of YASQL will look and function
+        better with this installed.
+
+CONFIG
+    YASQL will look for a config file first in ~/.yasqlrc then
+    /etc/yasql.conf. The following options are available:
+
+    connection_timeout = <seconds>
+        Timeout for connection attempts
+
+        Default: 20
+
+    max_connection_attempts = <num>
+        The amount of times to attempt the connection if the
+        username/password are wrong
+
+        Default: 3
+
+    history_file = <file>
+        Where to save the history file. Shell metachars will be globbed
+        (expanded)
+
+        Default: ~/.yasql_history
+
+    pager = <file>
+        Your favorite pager for extended output. (right now only the help
+        command)
+
+        Default: /bin/more
+
+    auto_commit = [0/1]
+        Autocommit any updates/inserts etc
+
+        Default: 0
+
+    commit_on_exit = [0/1]
+        Commit any pending transactions on exit. Errors or crashes will
+        still cause the current transaction to rollback. But with this on a
+        commit will occur when you explicitly exit.
+
+        Default: 0
+
+    long_trunc_ok = [0/1]
+        Long truncation OK. If set to 1 then when a row contains a field
+        that is set to a LONG time, such as BLOB, CLOB, etc will be
+        truncated to long_read_len length. If 0, then the row will be
+        skipped and not outputted.
+
+        Default: 1
+
+    long_read_len = <num_chars>
+        Long Read Length. This is the length of characters to truncate to if
+        long_trunc_ok is on
+
+        Default: 80
+
+    edit_history = [0/1]
+        Whether or not to put the query edited from the 'edit' command into
+        the command history.
+
+        Default: 1
+
+    auto_complete = [0/1]
+        Whether or not to generate the autocompletion list on connection. If
+        connecting to a large database (in number of tables/columns sense),
+        the generation process could take a bit. For most databases it
+        shouldn't take long at all though.
+
+        Default: 1
+
+    extended_complete_list = [0/1]
+        extended complete list will cause the possible matches list to be
+        filled by basicly any and all objects. With it off the tab list will
+        be restricted to only tables, columns, and objects owned by the
+        current user.
+
+        Default: 0
+
+    complete_tables = [0/1]
+        This controls whether or not to add tables to the completion list.
+        This does nothing if auto_complete is set to 0.
+
+        Default: 1
+
+    complete_columns = [0/1]
+        This controls whether or not to add columns to the completion list.
+        This does nothing if auto_complete is set to 0.
+
+        Default: 1
+
+    complete_objects = [0/1]
+        This controls whether or not to add all other objects to the
+        completion list. This does nothing if auto_complete is set to 0.
+        (Hint... depending on your schema this will include tables and
+        columns also, so you could turn the other two off)
+
+        Default: 1
+
+    extended_benchmarks = [0/1]
+        Whether or not to include extended benchmarking info after queries.
+        Will include both execution times and CPU loads for both the query
+        and formatting parts of the process.
+
+        Default: 0
+
+    prompt
+        A string to include in the prompt. The prompt will always be
+        suffixed by a '>' string. Interpolated variables: %H = connected
+        host. will be prefixed with a '@' %U = current user
+
+        Default: %U%H
+
+    column_wildcards = [0/1]
+        Column wildcards is an extremely experimental feature that is still
+        being hashed out due to the complex nature of it. This should affect
+        only select statements and expands any wildcards (*) in the column
+        list. such as 'select col* from table;'.
+
+        Default: 0
+
+    sql_query_in_error = [0/1]
+        This this on to output the query in the error message.
+
+        Default: 0
+
+    nls_date_format = <string>
+        Set the preferred NLS_DATE_FORMAT. This effects both date input and
+        output formats. The default is ISO standard (YYYY-MM-DD HH24:MI:SS',
+        not oracle default (YYYY-MM-DD).
+
+        Default: YYYY-MM-DD HH24:MI:SS
+
+    fast_describe
+        Turn on fast describes. These are much faster than the old style of
+        desc <table>, however non-built in datatypes may not be returned
+        properly. i.e. a FLOAT will be returned as a NUMBER type. Internally
+        FLOATs really are just NUMBERs, but this might present problems for
+        you. If so, set this to 0
+
+        Default: 1
+
+ISSUES
+    Oracle7
+        DBD::Oracle for Oracle8 may have issues connecting to an Oracle7
+        database. The one problem I have seen is that the use of
+        placeholders in a query will cause oracle to issue an error
+        "ORA-01008: not all variables bound". This will affect all of the
+        hard-coded queries that I use such as the ones for the 'desc' and
+        'show' commands. The queries that you type in on the command line
+        may still work. The DBD::Oracle README mentions the use of the '-8'
+        option to the 'perl Makefile.PL' command to use the older Oracle7
+        OCI. This has not been tested.
+
+AUTHOR
+    Originaly written by Nathan Shafer (nshafer@ephibian.com) with support
+    from Ephibian, Inc. http://www.ephibian.com Now it is mostly developed
+    and maintained by Balint Kozman (qzy@users.sourceforge.net).
+    http://www.imind.hu
+
+THANKS
+    Thanks to everyone at Ephibian that helped with testing, and a special
+    thanks to Tom Renfro at Ephibian who did a lot of testing and found
+    quite a few doozies. Also a lot of thanks goes to the mates at iMind.dev
+    who keep suffering from testing new features on them.
+
+    The following people have also contributed to help make YASQL what it
+    is: Allan Peda, Lance Klein, Scott Kister, Mark Dalphin, Matthew Walsh
+
+    And always a big thanks to all those who report bugs and problems,
+    especially on other platforms.
+
+COPYRIGHT
+    Copyright (C) 2000-2002 Ephibian, Inc., 2005 iMind.dev.
+
+LICENSE
+    This program is free software; you can redistribute it and/or modify it
+    under the terms of the GNU General Public License as published by the
+    Free Software Foundation; either version 2 of the License, or (at your
+    option) any later version.
+
+    This program is distributed in the hope that it will be useful, but
+    WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General
+    Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with this program; if not, write to the Free Software Foundation, Inc.,
+    59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+
+TODO
+    desc a synomym doesn't keep the right schema... I think. Saw in desc
+    parking.customer when logged in as cccrsmgr in 3c db
+    allow history to be saved based on host (as an option)
+    make stifle_history a configurable option
+    a row is printed after "Attempting to cancel query"
+    reading from a script will not change prompt properly (for a script with
+    no terminator)
+    NULL stops printing after table goes into overflow or something
+    extra space in \G... maybe others
+    bug: tag completion doesn't work with caps anymore
+    Add support for /NOLOG
+    allow dblinks in show blah on blah commands
+    show query doesn't work with schemas and db links
+    add save and get buffer commands
+    add R[UN] command (/ equivilent)
+    add support for just 'connect' and prompt for username and password
+    add PASSW[ORD] command for changing password
+    add -s[ilent] command line to suppress all startup output and command
+    prompts
+    add 'start' command for scripting
+    add 'run' synonum for '/'
+    add 'show parameters <filter>' support
+    fix segfaults when cancelling large outputs
+    Add a 'SPOOL' command
+    fix 'set...' commands
+    Add variable bindings, prompting, control structures, etc.
+    be able to describe any kind of object
+    Add 'startup queries' in config file or support glogin.sql and login.sql
+    fix case sensitive object names
+    make win32 compliant
+    add better error messages when the user can't access a data dictionary
+    table
+    add better error output, with line/col numbers and maybe a pointer.
+    add chained ops, exactly like bash
+    add plugins and hooks for all aspects.
+    Add smarter tables and wrapping in columns. Also add configurable max
+    column widths and max table width.
+    Add a curses interface option for easy viewing and scrolling, etc. This
+    will require some research to determine if it's even worth it.
+    Add HTML output option
+
+CHANGELOG
+    $Log: yasql,v $ Revision 1.83 2005/05/09 16:57:13 qzy Fixed the
+    'DECIMAL' problem with describe command. Added sql mode with \i (patch
+    by Ed Avis). Added redirectors (>, >>, |) to describe. Added 'show user'
+    command. Added 'show uid' command. Added new makefile targets: clean,
+    check. (patch by Ed Avis) Added "and owner = ?" to some show targets
+    (patch by anonymous). Added command_complete_list feature and config
+    option. Added disconnect command Added command completion: select,
+    update, insert, delete, execute, etc. Added table.column name
+    completion. Added feature to run tty-less (patch by Michael Kroell).
+    Added a workaround for SunOS's alarm() bug (patch by Ed Avis). Fixed
+    some minor issues in parser code.
+
+    Revision 1.82 2005/02/18 16:57:13 qzy Added batch mode (ewl patch).
+    Allow connections AS SYSDBA, AS SYSOPER and internal (sysdba patch by
+    Derek Whayman). Added server_output to config options. Changed script
+    execution to only add script lines to the query buffer (and not to
+    history).
+
+    Revision 1.81 2002/03/06 21:55:13 nshafer Fixed bug with password
+    prompt. Added 'show plan' for outputting last explain plan results.
+    Added 'show query' for viewing queries for views and materialized views.
+    Optimized describes to be as fast as describes in SQL*Plus. Added new
+    option 'fast_describe' on by default for new describe method. Added
+    single_output as a formatting option for internal use. Fixed problem
+    with password, quit, exit, \q getting added to the history list. Changed
+    history to not add duplicate entries right next to each other. Added
+    support for basic (non-returning) PL/SQL commands. Added support for
+    create function, package, package body, prodedure, trigger. Added 'show
+    errors' command Added 'conn' shortcut for 'connection'. Added
+    'exec[ute]' command. Added 'set serverout[put] on|off' command to mimic
+    SQL*Plus's. Added alarms to pings in cases where DB connection is
+    dropped and ping hangs. Cleaned up error messages. Renamed config
+    options AutoCommit, CommitOnExit, LongTruncOk, and LongReadLen
+    toauto_commit, commit_on_exit, long_trunc_ok, and long_read_len. Old
+    names are now deprecated. Changed quote escaping to be '' and "" instead
+    of \' and \". Added full support for comments: rem[ark], --, and /* */.
+    Right-justify works for the '8' datatype as well as '3' now. Re-worked
+    debug output levels. Optimized query for completion lists a bit. Added
+    completion-list limiting based on location in some DML statements
+    (select, update, insert). Fixed up the display of '...' when generating
+    tab completion list. Should work a lot better when hitting tab in the
+    middle of the line. Added show views, objects, sequences, clusters,
+    dimensions, functions, procedures, packages, indexes, indextypes,
+    libraries, materialized views, snapshots, synonyms, triggers. Added show
+    all <objects> command. Added type and owner columns to show commands.
+    Fixed commit_on_exit logic. Added ability to use external authentication
+    ('yasql /'). The .sql extension for the scripting and editing commands
+    are now optional. Fixed up editor execution to hopefully find the editor
+    better. Added "Command" entry to "show processes". Added "show waits"
+    and "show all waits" commands. Re-organized command line usage in
+    anticipation for script parameters. Removed all uses of 'stty'. Added
+    processing of STDIN, so redirects and pipes to YASQL work now. Changed
+    benchmarking to include time for fetching... this should work better
+    with Oracle 7.x, which doesn't seem to execute the query until you try
+    fetching Updated documentation. Fixed up alarm() calls. Fixed setting of
+    NLS_DATE_FORMAT to apply on reconnects. Broke commands into 2 sets...
+    ones that exectute any time, and ones that execute only when nothing is
+    in the buffer Fixed printing of text read in from an edit command. It
+    now echoes all of it. Now ignoring most SET commands so we don't tack
+    them onto queries Fixed permissions in tarball
+
+    Revision 1.80 2001/08/01 18:06:27 nshafer Fixed bug with delayed $term
+    initialization
+
+    Revision 1.79 2001/08/01 17:52:35 nshafer Fixed compatibility issues
+    with the data dictionary in Oracle 7. Fixed ordering of indexes for
+    compound indexes. Fixed display of objects from other schemas in some
+    data dictionary commands such as 'show indexes on table'. (Thanks Nix)
+    Fixed matching of declare and end in query string. Will not only match
+    if on blank line. Fixed matching of '/' terminator in middle of queries.
+    Will now only match if at end of line (Thanks Wesley Hertlein). Temp
+    file for editing now appends '.sql' to end of temp file so that editors,
+    like vim, automatically turn on syntax highlighting. Added searching of
+    environment variable SQLPATH when looking for scripts. Terminal setup is
+    now after script parsing, so that it will work when run under cron
+    (Thanks David Zverina).
+
+    Revision 1.78 2001/07/05 13:52:56 nshafer Fixed bug where parens were
+    matching improperly.
+
+    Revision 1.77 2001/07/04 02:57:08 nshafer Fixed bug where terminators
+    wouldn't match if they were the next character after a quote character.
+
+    Revision 1.76 2001/06/28 04:17:53 nshafer Term::ReadLine::Perl now
+    supported, for what little functionality it does provide. Fixed segfault
+    when hitting up when history is empty. Fixed bug when providing script
+    names on command line (Thanks to Dave Zverina.) Rewrote the query parser
+    to fix a bug, caused by the multiple-queries-on-one- line feature, that
+    causes terminators, such as ';' and '/' to match when in quotes. When
+    hitting tab on a line starting with a '@' for scripts, tab will now
+    complete filenames and not database objects. Fixed DB timeout when
+    prompting for username and password. Added support for 'DECLARE'
+    keyword, however this does not mean that variable binding in PL/SQL
+    blocks works yet. Sped up startup time a bit more (hopefully).
+
+    Revision 1.75 2001/06/19 16:02:16 nshafer Fixed typo in error message
+    for Term::ReadLine::Gnu Fixed crash when tab hit at username or password
+    prompt Added -- as a comment type and fixed case where comment in quotes
+    would match. (Mark Dalphin) Fixed 'desc' to also describe partitioned
+    tables (Erik)
+
+    Revision 1.74 2001/06/18 21:07:55 nshafer Fixed bug where / would not
+    rerun last query (thanks Scott Kister)
+
+    Revision 1.73 2001/05/23 18:35:17 nshafer Got rid of "Prototype
+    mismatch" errors. Fixed typo in extended benchmarks
+
+    Revision 1.72 2001/05/22 16:06:36 nshafer Fixed bug with error messages
+    not displaying first time, and fixed bug with tab completion output
+
+    Revision 1.71 2001/05/17 21:28:40 nshafer New CSV output format. Added
+    CSV file input on any query. Added ability to pipe query results to any
+    program. Added ability for multiple queries on one line. Changed tab
+    completion generator to run first time you hit tab instead of on
+    startup, which speeds up database connection. Now using SelfLoader to
+    speed up loading and minimize memory use. Added a 'show plan for ____'
+    command for easy display of explain plan output. Query times are now
+    more readable and will split into weeks, days, hours, minutes, and
+    seconds. Hopefully fixed some problems with stty and Solaris 2.4. Added
+    support for 'rem' comments in scripts. Redirection output files are now
+    shell expanded.
+
+    Revision 1.70 2001/05/08 17:49:51 nshafer Fixed all places where a
+    non-alphanumeric object name would break or not match. Added code for
+    autoconf style installs.
+
+    Revision 1.69 2001/05/07 23:47:47 nshafer fixed type
+
+    Revision 1.68 2001/05/07 22:26:20 nshafer Fixed tab completion problems
+    when completing objects with a $ in their name. Added config options
+    complete_tables, complete_columns, and complete_objects, Added
+    redirection of query output to file. Hopefully sped up exiting. Updated
+    documentation.
+
+    Revision 1.67 2001/05/04 17:35:04 nshafer YASQL will now suspend
+    properly back to the shell when SIGTSTP is sent, as in when you hit
+    ctrl-z on most systems. Added NLS_DATE_FORMAT setting in config file to
+    support alter date views. Defaults to ISO standard. YASQL will now
+    attempt to change it's process name, such as when viewed in ps or top.
+    This will not work on all systems, nor is it a complete bullet proof way
+    to hide your password if you provide it on the command line. But it
+    helps to not make it so obvious to regular users. Scripts entered on the
+    command line are now checked to be readable before attempting
+    connection. A failed 'connect command will no long alter the prompt.
+    Added \p option for printing the current buffer, ala psql. Large query
+    results (over 1000 rows) are now handled MUCH better. YASQL will no
+    longer try to hold more than 1000 rows in memory, which keeps it from
+    sucking memory, and also improves the speed. When a query does return
+    more than 1000 rows in table mode, those first 1000 will determine the
+    column widths, and all rows after that will get truncated. AIX has been
+    reported to run YASQL perfectly.
+
+    Revision 1.66 2001/03/13 21:34:58 nshafer There are no longer any
+    references to termcap, so yasql should now work on termcap-less systems
+    such as Debian Linux and AIX
+
+    Revision 1.65 2001/03/12 17:44:31 nshafer Restoring the terminal is
+    hopefully more robust and better now. YASQL now tries to use the 'stty'
+    program to dump the settings of the terminal on startup so that it can
+    restore it back to those settings. It requires that stty is installed in
+    the path, but that should be the case with most systems. Also made the
+    output of the query in the error message an option that is off by
+    default. I had never meant to include that in the final release, but
+    kept on forgetting to take it out.
+
+    Revision 1.64 2001/03/06 16:00:33 nshafer Fixed bug where desc would
+    match anytime, even in middle of query, which is bad.
+
+    Revision 1.63 2001/03/01 17:30:26 nshafer Refined the ctrl-c process for
+    not-so-linuxy OS's, namely solaris. Now stripping out Dos carriage
+    returns since SQL*Plus seems to.
+
+    Revision 1.62 2001/02/26 22:39:12 nshafer Fixed bug where prompt would
+    reset itself when a blank line was entered. Added script argument on
+    command line (Lance Klein) Added support for any command line commands
+    in the script (Lance Klein) The 'desc' and 'show' commands no longer
+    require a terminator (like ;) as long as the whole statement is on one
+    line (Lance Klein) Added option 'extended_tab_list' for a much bigger,
+    more complete tab listing (Lance Klein) The edit command is no longer
+    limited to 1 query at a time. You can now put any valid command or
+    query, and as many of them as you want. The parsing rules for the edit
+    command is exactly identical to the script parsing. cleaned up
+    documentation a bit
+
+    Revision 1.61 2001/01/31 19:56:22 nshafer changed CommitOnExit to be 1
+    by default, to emulate SQL*Plus behavior, and at popular request
+
+    Revision 1.60 2001/01/29 16:38:17 nshafer got rid of (tm)
+
+    Revision 1.59 2001/01/29 16:28:22 nshafer Modified docs a little with
+    the new scope of open source now in the mix.
+
+    Revision 1.58 2001/01/24 15:27:00 nshafer cleanup_after_signals is not
+    in the Term::ReadLine::Stub, so it would output error messages on
+    systems without Term::ReadLine::Gnu. Fixed
+
+    Revision 1.57 2001/01/17 23:26:53 nshafer Added Tom Renfro's
+    column_wildcard expansion code. New conf variable: column_wildcards. 0
+    by default until this code is expanded on a bit more.
+
+    Revision 1.56 2001/01/17 23:00:25 nshafer Added CommitOnExit config, 0
+    by default. Added info output at startup and when a new connection is
+    initiated about the state of AutoCommit and CommitOnExit. Also added
+    statement about explicit rollback or commit when disconnecting. Added
+    warning message to commit_cmd and rollback_cmd if AutoCommit is on. Now
+    explicitly committing or rolling back on disconnect, it is no longer
+    left up to the DBI's discretion... except in abnormal termination.
+
+    Revision 1.55 2001/01/11 18:05:12 nshafer Added trap for regex errors in
+    tab completion (like if you put 'blah[' then hit tab)
+
+    Revision 1.54 2001/01/10 17:07:22 nshafer added output to those last 2
+    commands
+
+    Revision 1.53 2001/01/10 17:03:58 nshafer added commit and rollback
+    commands so that you don't have to send them to the backend
+
+    Revision 1.52 2001/01/10 16:00:08 nshafer fixed bug with prompt where on
+    each call get_prompt would add another '@'. Thanks Tom
+
+    Revision 1.51 2001/01/09 21:16:12 nshafer dar... fixed another bug where
+    the %H would stay if there was no prompt_host
+
+    Revision 1.50 2001/01/09 21:12:13 nshafer fixed bug with that last
+    update. Now it only interpolates the %H variable if there is something
+    to interpolate it with
+
+    Revision 1.49 2001/01/09 21:09:56 nshafer changed the %H variable to be
+    prefixed with a @
+
+    Revision 1.48 2001/01/09 21:04:36 nshafer changed 'default' to '' for
+    the prompt's hostname when no connect_string is used
+
+    Revision 1.47 2001/01/09 20:55:11 nshafer added configurable prompt and
+    changed the default prompt
+
+    Revision 1.46 2001/01/09 18:50:50 nshafer updated todo list
+
+    Revision 1.45 2001/01/09 18:32:35 nshafer Added 'connect
+    <connect_string>' command. I may add the ability to specify options like
+    on the command line (like '-H blah.com')
+
+    Revision 1.44 2001/01/08 22:08:49 nshafer more documentation changes
+
+    Revision 1.43 2001/01/08 20:51:31 nshafer added some documentation
+
+    Revision 1.42 2001/01/08 20:09:35 nshafer Added debug and autocommit
+    commands
+
+    Revision 1.41 2001/01/08 18:12:43 nshafer added END handler to hopefully
+    clean up the terminal better
+
+    Revision 1.40 2001/01/05 23:29:38 nshafer new name!
+
+    Revision 1.39 2001/01/05 18:00:16 nshafer Added config file options for
+    auto completion generation and extended benchmark info
+
+    Revision 1.38 2001/01/05 16:39:47 nshafer Fixed error where calling edit
+    a second time would not open the file properly because of the way glob()
+    works.
+
+    Revision 1.37 2001/01/04 23:52:30 nshafer changed the version string to
+    parse it out of the revision string (duh...) moved the prompting of
+    username and password so that the check for the oracle_home variable
+    happens before. Before if you didn't have the environment variable set
+    then it will prompt you for username and password, then die with the
+    error, which is annoying fixed the quit calls so taht they properly
+    erase the quit line from the history. I had broken this a long time ago
+    when I added the exit status param to the quit function Outputting in
+    full table format (';' terminator) with a num_rows number (like ';100')
+    would still cause the entire result set to be pulled into memory, which
+    was really slow and could take a lot of memory if the table was large.
+    Fixed it so that it only pulls in num_rows number of rows when using the
+    digit option
+
+    Revision 1.36 2000/12/22 22:12:18 nshafer fixed a wrong-quote-type in
+    the debug messages
+
+    Revision 1.35 2000/12/22 22:07:06 nshafer forgot version... you know the
+    drill...
+
+    Revision 1.34 2000/12/22 21:57:01 nshafer Added config file support,
+    queries from the 'edit' command are now entered into the command history
+    (configurable), cleaned up the SIGINT actions quite a bit so they should
+    work better now, added LongReadLen and LongTruncOk options so that LONG
+    columns types won't mess up, added the number after terminator feature
+    to limit how many rows are returned.
+
+    Revision 1.33 2000/12/20 22:56:03 nshafer version number.... again....
+    sigh
+
+    Revision 1.32 2000/12/20 22:55:32 nshafer added todo item, now in rpms
+
+    Revision 1.31 2000/12/20 17:07:52 nshafer added the reprompt for
+    username/password on error 1005 null password given
+
+    Revision 1.30 2000/12/20 17:04:18 nshafer Refined the shadow_redisplay
+    stuff. Now I will only use my builtin function if the terminal type is
+    set to "xterm" because that terminal type has a broken termcap entry.
+    Also set it to not echo when entering password if Term::ReadLine::Gnu is
+    not installed
+
+    Revision 1.29 2000/12/20 15:47:56 nshafer trying a new scheme for the
+    shadow_redisplay. Clear to EOL wasn't working Also fixed a few problems
+    in the documentation .,
+
+    Revision 1.28 2000/12/19 23:55:03 nshafer I need to stop forgetting the
+    revision number...
+
+    Revision 1.27 2000/12/19 23:48:49 nshafer cleaned up debugging
+
+    Revision 1.26 2000/12/19 23:10:18 nshafer Lotsa new stuff... tab
+    completion of table, column, and object names, improved signal handling,
+    the edit command now accepts a filename parameter, new command 'show
+    processes' which shows you info on who's connected, improved benchmark
+    info, and a lot of other cleanup/tweaks
+
+    Revision 1.25 2000/12/13 16:58:26 nshafer oops forgot documentation
+    again
+
+    Revision 1.24 2000/12/13 16:54:42 nshafer added desc <trigger>
+
+    Revision 1.23 2000/12/12 17:52:15 nshafer updated todo list (oops,
+    forgot)
+
+    Revision 1.22 2000/12/12 17:51:39 nshafer added desc <index>
+
+    Revision 1.21 2000/12/12 17:15:28 nshafer fixed bug when connecting
+    using a host string (-H option) added a few more types to the 'show' and
+    'desc' commands
+
+    Revision 1.20 2000/12/08 22:13:43 nshafer many little fixes and tweaks
+    here and there
+
+    Revision 1.19 2000/12/06 20:50:03 nshafer added scripting ability with
+    "@<filename>" command changed all tabs to spaces!
+
+    Revision 1.18 2000/12/06 19:30:38 nshafer added clear command refined
+    connection process. if invalid username/password entered then prompt
+    again
+
+    Revision 1.17 2000/12/05 22:20:58 nshafer Tightened up outputs. Doesn't
+    show column names if no rows selected, if it's not a select, then show
+    number of rows affected
+
+    Revision 1.16 2000/12/04 18:04:53 nshafer *** empty log message ***
+
+    Revision 1.15 2000/12/04 18:03:14 nshafer fixed bug where the -H option
+    was interpreted as -h or help. All command line options are now case
+    sensitive
+
+    Revision 1.14 2000/12/04 17:54:38 nshafer Added list command (and \l and
+    l)
+
+    Revision 1.13 2000/12/04 17:34:18 nshafer fixed a formatting issue if
+    Time::HiRes isn't installed
+
+    Revision 1.12 2000/12/04 17:29:41 nshafer Added benchmark options to
+    view the extended benchmark info. Now it displays just the time in a
+    more friendly format. The old style is only active if the benchmark
+    option is specified. Cleaned up some formatting issues Brought the usage
+    and POD documentation up to date Added some items to the TODO
+
+    Revision 1.11 2000/11/30 22:54:38 nshafer Fixed bug with the edit
+    command where if you were 'inquotes' then you would stay in quotes even
+    after editing the file
+
+    Revision 1.10 2000/11/30 22:01:38 nshafer Fixed bug where username and
+    password were added to the command history. Set it so that the quit
+    commands are not added to the command history either. Added the 'edit'
+    command and modified it's todo list item, as well as added it to the
+    'help' command
+
+    Revision 1.9 2000/11/29 17:55:35 nshafer changed version from .21 to 1.0
+    beta 9. I'll follow the revision numbers now
+
+    Revision 1.8 2000/11/29 17:46:31 nshafer added a few items to the todo
+    list
+
+    Revision 1.7 2000/11/29 15:50:56 nshafer got rid of SID output at
+    startup
+
+    Revision 1.6 2000/11/29 15:49:51 nshafer moved revision info to
+    $revision and added Id output
+
+    Revision 1.5 2000/11/29 15:46:41 nshafer fixed revision number
+
+    Revision 1.4 2000/11/29 15:44:23 nshafer fixed issue where environment
+    variable ORACLE_SID overwrote explicit set on the command line. now
+    whatever you put on the command line will overwrite the environment
+    variable
+

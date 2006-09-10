@@ -1,0 +1,20 @@
+INSTALL = @INSTALL@
+SHELL = @SHELL@
+PERL = @PERL@
+prefix = @prefix@
+exec_prefix = @exec_prefix@
+bindir = @bindir@
+mandir = @mandir@
+sysconfdir = @sysconfdir@
+
+default :
+	${PERL} ./config.pl ${PERL} ${bindir} ${mandir} ${sysconfdir}
+
+install : default
+	${PERL} ./install.pl "${INSTALL}" ${bindir} ${mandir} ${sysconfdir}
+
+check : default
+	./yasql --help > /dev/null
+
+clean :
+	/bin/rm -f config.cache config.log config.status yasql

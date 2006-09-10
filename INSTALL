@@ -1,0 +1,101 @@
+YASQL
+
+Requirements:
+
+   Perl 5
+       This was developed with Perl 5.6, but is known to work
+       on 5.005_03 and above.  Any earlier version of Perl 5
+       may or may not work.  Perl 4 will definately not work.
+
+   Unix environment
+       YASQL was developed under GNU/Linux, and aimed at as many
+       Unix installations as possible.  Known to be
+       compatible with GNU/Linux, AIX and Sun Solaris.
+       Please send me an email (qzy@users.sourceforge.net) if it
+       works for other platforms.  I'd be especially
+       interested if it worked on Win32.
+
+   Oracle Server
+       It has been tested and developed for Oracle8 and
+       Oracle8i.  There is atleast one issue with Oracle7
+       that I know of (see ISSUES below) and I have not
+       tested it with Oracle9 yet.
+
+   Oracle client libraries
+       The Oracle client libraries must be installed for
+       DBD::Oracle.  Of course you can't install DBD::Oracle
+       without them...
+
+   DBD::Oracle
+       DBD::Oracle must be installed since this uses DBI for
+       database connections.
+
+   ORACLE_HOME
+       The ORACLE_HOME environment variable must be set if
+       you use a connection descriptor to connect so that
+       YASQL can translate the descriptor into usefull
+       connection information to make the actual connection.
+
+   ORACLE_SID
+       The ORACLE_SID environment variable must be set unless
+       you specify one with the -s option (see options
+       above).
+
+   Term::Readline
+       Term::Readline must be installed (it is with most Perl
+       installations), but more importantly, installing
+       Term::ReadLine::Gnu from CPAN will greatly enhance the
+       usability.
+
+   Time::HiRes
+       This is used for high resolution benchmarking.  It is
+       optional.
+
+   Text::CSV_XS
+       This perl module is required if you want to output CSV
+       or input from CSV files.  If you don't plan on using
+       this features, then you don't need to install this
+       module.
+
+   Term::ReadKey
+       This module is used for better input and output
+       control.  Right now it isn't required, but some parts
+       of YASQL will look and function better with this
+       installed.
+
+Installation:
+
+ * ./configure
+
+   The following options to configure are used by YASQL:
+     --prefix=PREFIX         install architecture-independent files in PREFIX
+                             [/usr/local]
+     --exec-prefix=EPREFIX   install architecture-dependent files in EPREFIX
+                             [same as prefix]
+     --bindir=DIR            user executables in DIR [EPREFIX/bin]
+     --sysconfdir=DIR        read-only single-machine data in DIR [PREFIX/etc]
+     --mandir=DIR            man documentation in DIR [PREFIX/man]
+
+     
+ 
+ * make
+ 
+ * make install
+
+Etc:
+
+type 'man yasql' for usage instructions.
+
+type 'yasql' to run it!
+
+To report success, run (replace First M. Last with your name):
+ ( echo 'First M. Last'; grep "# .Id" `which yasql`; perl -V ) | \
+ mail -s "YASQL install success" qzy@users.sourceforge.net
+
+To use the advanced features you should have the Term::Readline:Gnu perl 
+package installed, as well as the Time::HiRes module.  Both of these are 
+optional, but they really are nice to have.
+
+Please report any problems to qzy@users.sourceforge.net.
+
+Get the latest version from http://sourceforge.net/projects/yasql/
