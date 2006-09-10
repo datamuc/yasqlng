@@ -317,7 +317,7 @@ sub init {
 
   # Create a Text::CSV object
   unless($notextcsv) {
-    $csv = new Text::CSV_XS;
+    $csv = new Text::CSV_XS( { binary => 1 } );
   }
 
   # Change the process name to just 'yasql' to somewhat help with security.
