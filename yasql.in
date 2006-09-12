@@ -3335,7 +3335,8 @@ sub format_output {
 	    if (not defined $v) {
 		print FOUT 'null';
 	    } else {
-		if ($t eq 'DOUBLE' or $t eq 'NUMBER') {
+    if ($t eq 'DOUBLE' or $t eq 'DOUBLE PRECISION' or 
+        $t eq 'NUMBER' or $t eq 'DECIMAL') {
 		    die "bad number: $v" if $v !~ /\d/;
 		    print FOUT $v;
 		} elsif ($t eq 'VARCHAR2' or $t eq 'CHAR' or $t eq 'CLOB') {
