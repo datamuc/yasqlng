@@ -2406,7 +2406,7 @@ sub describe {
     	    debugmsg(3, "Opening file '$op_text' for output redirection using [$op]");
 	    open(FOUT, $op . $op_text) || do query_err('redirect',"Cannot open file '$op_text' for writing: $!", '');
         } elsif($op eq '|') {
-    	    ($op_text) = glob($op_text);
+    	    debugmsg(3, "Opening pipe to '$op_text' for output redirection");
 	    open(FOUT, $op . $op_text) || do query_err('pipe',"Cannot open pipe '$op_text': $!", '');
 	} else {
 	    open(FOUT, ">&STDOUT");
@@ -2803,7 +2803,7 @@ sub query {
         return();
       };
     } elsif($op eq '|') {
-      ($op_text) = glob($op_text);
+      debugmsg(3, "Opening pipe to '$op_text' for output redirection");
       open(FOUT, $op . $op_text) || do{
         query_err('pipe',"Cannot open pipe '$op_text': $!", $sqlstr);
         finish_query($sth);
