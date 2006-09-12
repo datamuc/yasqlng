@@ -231,7 +231,7 @@ sub init {
   $sigintcaught = 0;
   $completion_built = 0;
 
-  usage(1) if $opt_help;
+  usage(0) if $opt_help;
 
   # Output startup string
   if(!$opt_batch) {
@@ -3555,7 +3555,7 @@ Options:
 See the man pages for more help.
 _EOM_
   
-  exit(1) if $exit;
+  exit($exit);
 }
 
 sub help {
