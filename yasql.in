@@ -857,7 +857,7 @@ sub db_connect {
 
     $this_prompt_host = $opt_host;
     $this_prompt_host = "$opt_sid!" . $this_prompt_host if $opt_sid;
-    $prompt{user} = $username;
+    $this_prompt_user = $username;
     alarm(0); # cancel alarm
   } else {
     # attempt a connection without specifying a hostname or anything
