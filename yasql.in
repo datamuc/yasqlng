@@ -734,7 +734,12 @@ sub db_reconnect {
 
   commit_on_exit();
 
-  $dbh->disconnect() if defined $dbh;
+  if (defined $dbh) {
+      if (not $dbh->disconnect()) {
+          warn "Disconnect failed: $DBI::errstr\n";
+          return;
+      }
+  }
 
   $dbh = db_connect(1, @dbparams);
 }
@@ -1433,15 +1438,20 @@ sub connect_cmd {
   my($ora_session_mode, $username, $password, $connect_string) = parse_logon_string($arg);
   
   my $new_dbh = db_connect(0, $ora_session_mode, $username, $password, $connect_string);
-  if($new_dbh) {
-    print "Closing last connection...\n";
-    commit_on_exit();
-
-    $dbh->disconnect() if defined $dbh;
-    $dbh = $new_dbh;
-    $connected = 1;
+  if (not $new_dbh) {
+      warn "failed to make new connection as $username to $connect_string: $DBI::errstr\n";
+      warn "keeping old connection\n";
+      return;
   }
-  
+
+  if (defined $dbh) {
+      commit_on_exit();
+      $dbh->disconnect()
+        or warn "failed to disconnect old connection - switching anyway\n";
+  }
+
+  $dbh = $new_dbh;
+  $connected = 1;
 }
 
 sub disconnect_cmd {
@@ -1466,8 +1476,12 @@ sub commit_cmd {
     if($dbh->{AutoCommit}) {
       wrn("commit ineffective with AutoCommit enabled");
     } else {
-      $dbh->commit();
-      print "Transaction committed\n";
+        if ($dbh->commit()) {
+            print "Transaction committed\n";
+        }
+        else {
+            warn "Commit failed: $DBI::errstr\n";
+        }
     }
   } else {
     print "No connection\n";
@@ -1482,8 +1496,12 @@ sub rollback_cmd {
     if($dbh->{AutoCommit}) {
       wrn("rollback ineffective with AutoCommit enabled");
     } else {
-      $dbh->rollback();
-      print "Transaction rolled back\n";
+        if ($dbh->rollback()) {
+            print "Transaction rolled back\n";
+        }
+        else {
+            warn "Rollback failed: $DBI::errstr\n";
+        }
     }
   } else {
     print "No connection\n";
@@ -2676,7 +2694,8 @@ sub set_cmd {
     if(lc($1) eq 'on') {
       my $size = $2 || 1_000_000;
       debugmsg(2, "calling dbms_output_enable($size)");
-      $dbh->func( $size, 'dbms_output_enable' );
+      $dbh->func( $size, 'dbms_output_enable' )
+        or warn "dbms_output_enable($size) failed: $DBI::errstr\n";
       $set{serveroutput} = 1;
       debugmsg(2, "serveroutput set to $set{serveroutput}");
     } else {
@@ -3504,7 +3523,10 @@ sub quit {
 
   # disconnect the database
   debugmsg(1, "disconnecting from database");
-  $dbh->disconnect() if defined $dbh;
+  if (defined $dbh) {
+      $dbh->disconnect()
+        or warn "Disconnect failed: $DBI::errstr\n";
+  }
 
   debugmsg(1, "exiting with exitcode: [$exitcode]");
   exit($exitcode);
@@ -3518,7 +3540,8 @@ sub commit_on_exit {
     # do nothing, oracle commits on disconnect
   } elsif(defined $dbh && !$dbh->{AutoCommit}) {
     print "Rolling back any outstanding transaction...\n";
-    $dbh->rollback();
+    $dbh->rollback()
+      or warn "Rollback failed: $DBI::errstr\n";
   }
 }
 
