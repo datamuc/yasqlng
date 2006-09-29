@@ -175,7 +175,7 @@ sub sighandle {
       wrn("Connection lost (timeout: $conf{connection_timeout})");
       quit(1);
     } else {
-      err("Could not connect to database, timed out. (timeout: "
+      lerr("Could not connect to database, timed out. (timeout: "
          ."$conf{connection_timeout})");
     }
   }
@@ -603,12 +603,12 @@ sub populate_completion_list {
 
   if ($conf{command_complete_list}) {
     push(@completion_list, "command-create", "command-select", "command-insert", "command-update", "command-delete from", "command-from", "command-execute", "command-show", "command-describe", "command-drop");
+    push(@completion_list, "show-objects", "show-tables", "show-indexes", "show-sequences", "show-views", "show-functions", "show-constraints", "show-keys", "show-checks", "show-triggers", "show-query", "show-dimensions", "show-clusters", "show-procedures", "show-packages", "show-indextypes", "show-libraries", "show-materialized views", "show-snapshots", "show-synonyms", "show-waits", "show-processes", "show-errors", "show-user", "show-users", "show-uid", "show-plan", "show-database links", "show-dblinks");  
   }
 
   if ($current_table_name) {
 
     my @queries;
-    #@completion_list = ();
     push(@queries, "select 'current_column-$current_table_name.' || column_name from user_tab_columns where table_name=\'".uc($current_table_name)."\'");
 
     my $sqlstr = join(' union ', @queries);
@@ -695,6 +695,8 @@ sub complete_entry_function {
     } elsif($line_buffer =~ /insert.*into(?!.*values)[\s\w\$\#_,]*$/) {
       debugmsg(4, "where ...");
       push(@grep, '^table-');
+    } elsif($line_buffer =~ /^\s*show\s\w*/) {                                                                               
+      push(@grep, 'show-');
     } else {
       push(@grep, '');
     }
@@ -775,7 +777,7 @@ sub db_connect {
     }
   }
   unless($found) {
-    err("Could not find DBD::Oracle... please install.  Available drivers: "
+    lerr("Could not find DBD::Oracle... please install.  Available drivers: "
        .join(", ", @drivers) . ".\n");
   }
   #print "drivers: [" . join("|", @drivers) . "]\n";
@@ -927,7 +929,7 @@ sub db_connect {
     $connect_string = '' if $connect_string eq 'external';
     $dbhandle = db_connect($die_on_error,$ora_session_mode,undef,undef,$connect_string);
   } elsif($die_on_error) {
-    err("Could not connect to database: $dberrstr [$dberr]");
+    lerr("Could not connect to database: $dberrstr [$dberr]");
   } else {
     wrn("Could not connect to database: $dberrstr [$dberr]");
     return(0);
@@ -1016,7 +1018,7 @@ sub get_up {
 sub check_oracle_home {
   # This checks for the ORACLE_HOME environment variable and dies if it's
   # not set
-  err("Please set your ORACLE_HOME environment variable!") 
+  lerr("Please set your ORACLE_HOME environment variable!") 
     unless $ENV{ORACLE_HOME};
   return(1);
 }
@@ -1422,7 +1424,7 @@ sub get_csv_file {
 }
 
 sub close_csv {
-  close(CSV) || err("Could not close CSV filehandle: $!");
+  close(CSV) || lerr("Could not close CSV filehandle: $!");
   $csv_filehandle_open = 0;
   $csv_max_lines = 0;
 }
@@ -1800,6 +1802,9 @@ sub show {
 
   # convert to lowercase for comparison operations
   $input = lc($input);
+
+  # drop trailing whitespaces
+  ($input = $input) =~ s/( +)$//; 
 
   # parse the input to find out what 'thing' has been requested
   if($input =~ /^\s*show\s+([a-zA-Z0-9_\$\#\s]+)\s+(?:on|for)\s+([a-zA-Z0-9_\$\#]+)/) {
@@ -2320,6 +2325,12 @@ sub show {
         select uid from dual
       };
       query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+    } elsif(($1 eq 'database links') || ($1 eq 'dblinks')) {                                                                 
+      my $sqlstr = q{                                                                                                        
+        select db_link, host, owner from all_db_links                                                                        
+      };                                                                                                                     
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,                                                             
                                op_text => $op_text});
     } else {
       query_err("show", "Unsupported show type", $input);
@@ -3478,7 +3489,7 @@ sub query_err {
   print STDERR "\n";
 }
 
-sub err {
+sub lerr {
   my($msg) = @_;
   debugmsg(3, "err called", @_);
   # outputs an error message and exits
