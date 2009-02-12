@@ -3662,7 +3662,13 @@ Commands:
   debug [num]           Toggle debuggin on/off or if <num> is specified, then
                           set debugging to that level
   autocommit            Toggle AutoCommit on/off
-
+  set <string>        Set options
+                        string = [
+                           [long_read_len <size>]
+                           || [ fast_describe [on|off]]
+                           || [ serverout{put} [on|off] {size <size>} ]
+                        ]   
+ 
 Queries:
   All other input is treated as a query, and is sent straight to the database.
 
