@@ -784,8 +784,11 @@ sub db_connect {
   
   # Now we can attempt a connection to the database
   my $attributes = {
-    RaiseError => 0, PrintError => 0, AutoCommit => $conf{auto_commit}, 
-    LongReadLen => $conf{long_read_len}, LongTruncOk => $conf{long_trunc_ok},
+    RaiseError => 0, 
+    PrintError => 0, 
+    AutoCommit => $conf{auto_commit}, 
+    LongReadLen => $conf{long_read_len}, 
+    LongTruncOk => $conf{long_trunc_ok},
     ora_session_mode => $ora_session_mode
   };
 
@@ -2714,6 +2717,9 @@ sub set_cmd {
       $set{serveroutput} = 0;
       debugmsg(2, "serveroutput set to $set{serveroutput}");
     }
+  }elsif($input =~ /^\s*set\s+(long_read_len|LongReadLen)\s+(\d+)/i){
+      debugmsg(2, "long_read_len/LongReadLen set to $2");
+      $dbh->{LongReadLen} = $2;
   }
 }
     
