@@ -1792,14 +1792,25 @@ sub autocommit_toggle {
 }
 
 sub show_all_query {
-  my ( $select, $order_by, $format, $opts, $option, $option_key, $option_value ) = @_;
+  my ( $select, $order_by, $format, $opts, $static_where , $option, $option_key, $option_value,  ) = @_;
   debugmsg(3, "show_all_query called");
+  my $where = ' where ';
+  if ( $static_where ) {
+    $where = ' where '. $static_where . ' ';
+  }
   
   if ( $option eq 'like' ){
-    my $sqlstr = $select ." where ". $option_key ." like ? " . $order_by;
+    my $sqlstr = $select . $where;
+    $sqlstr .= ' and ' if ( $static_where );
+    $sqlstr .= $option_key ." like ? " . $order_by;
+    
     query($sqlstr , $format, $opts, $option_value );
   }else{
-    query($select.$order_by , $format, $opts );
+    my $sqlstr = $select;
+    $sqlstr .= $where if ($static_where);
+    $sqlstr .= $order_by;
+    
+    query($sqlstr , $format, $opts );
   };   
 
 }
@@ -1957,6 +1968,7 @@ sub show {
     }
   } elsif($input =~ /^\s*show\s+all\s+([a-zA-Z0-9_\$\#]+)\s*([a-zA-Z0-9_\'\$\#\%\s]*)$/) {
     my $object = $1;
+    my $rest = $2;
     my $option = '';
     my $option_value = '';
     my $opts = {
@@ -1964,12 +1976,17 @@ sub show {
       ,op => $op
       ,op_text => $op_text
     };
+    # Workaround for materialized views 
+    if ($object eq 'materialized' and  $2 =~ /views\s*([a-zA-Z0-9_\$\#\%\s]*)/ ){
+      $object = 'materialized views';
+      $rest = $1;
+    } 
     
-    if ($2 =~ /\s*(\w+)\s+[']?([a-zA-Z0-9_\$\#\%]+)[']?/){
+    if ($rest =~ /\s*(\w+)\s+[']?([a-zA-Z0-9_\$\#\%]+)[']?/){
       $option = lc($1);
       $option_value = uc($2);
     }
-    debugmsg(3,"show all '$object'");
+ 
     if($object eq 'tables') {
 
       show_all_query(
@@ -1977,134 +1994,208 @@ sub show {
         ,q{ order by table_name }
         ,$format
         ,$opts
+        ,q{}
         ,$option
-        ,'table_name'
+        ,q{table_name}
         ,$option_value 
       );
           
     } elsif($object eq 'views') {
-      my $sqlstr = q{
-        select view_name "View Name", 'VIEW' "Type", owner "Owner"
-        from all_views
-        order by view_name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select view_name "View Name", 'VIEW' "Type", owner "Owner" from all_views }
+        ,q{ order by view_name }
+        ,$format
+        ,$opts
+        ,q{}
+        ,$option
+        ,q{view_name}
+        ,$option_value 
+      );
+      
     } elsif($object eq 'objects') {
-      my $sqlstr = q{
-        select object_name "Object Name", object_type "Type", owner "Owner"
-        from all_objects
-        order by object_name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select object_name "Object Name", object_type "Type", owner "Owner" from all_objects }
+        ,q{ order by object_name }
+        ,$format
+        ,$opts
+        ,q{}
+        ,$option
+        ,q{object_name}
+        ,$option_value 
+      );
+    
     } elsif($object eq 'sequences') {
-      my $sqlstr = q{
-        select sequence_name "Sequence Name", 'SEQUENCE' "Type", sequence_owner "Owner"
-        from all_sequences
-        order by sequence_name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select sequence_name "Sequence Name", 'SEQUENCE' "Type", sequence_owner "Owner" from all_sequences }
+        ,q{ order by sequence_name }
+        ,$format
+        ,$opts
+        ,q{}
+        ,$option
+        ,q{sequence_name}
+        ,$option_value 
+      );
+      
     } elsif($object eq 'clusters') {
-      my $sqlstr = q{
-        select cluster_name "Cluster Name", 'CLUSTER' "Type", owner "Owner"
-        from all_clusters
-        order by cluster_name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select cluster_name "Cluster Name", 'CLUSTER' "Type", owner "Owner" from all_clusters}
+        ,q{ order by cluster_name }
+        ,$format
+        ,$opts
+        ,q{}
+        ,$option
+        ,q{cluster_name}
+        ,$option_value 
+      );
+
     } elsif($object eq 'dimensions') {
-      my $sqlstr = q{
-        select dimension_name "Dimension Name", 'DIMENSION' "Type", owner "Owner"
-        from all_dimensions
-        order by dimension_name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select dimension_name "Dimension Name", 'DIMENSION' "Type", owner "Owner" from all_dimensions}
+        ,q{ order by dimension_name }
+        ,$format
+        ,$opts
+        ,q{}
+        ,$option
+        ,q{dimension_name}
+        ,$option_value 
+      );
+
     } elsif($object eq 'functions') {
-      my $sqlstr = q{
-        select distinct name "Function Name", 'FUNCTION' "Type", owner "Owner"
-        from all_source
-        where type = 'FUNCTION'
-        order by name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select distinct name "Function Name", 'FUNCTION' "Type", owner "Owner" from all_source}
+        ,q{ order by name }
+        ,$format
+        ,$opts
+        ,q{type = 'FUNCTION'}
+        ,$option
+        ,q{name}
+        ,$option_value 
+      );
+
     } elsif($object eq 'procedures') {
-      my $sqlstr = q{
-        select distinct name "Procedure Name", 'PROCEDURE' "Type", owner "Owner"
-        from all_source
-        where type = 'PROCEDURE'
-        order by name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select distinct name "Procedure Name", 'PROCEDURE' "Type", owner "Owner" from all_source}
+        ,q{ order by name }
+        ,$format
+        ,$opts
+        ,q{type = 'PROCEDURE'}
+        ,$option
+        ,q{name}
+        ,$option_value 
+      );
+
     } elsif($object eq 'packages') {
-      my $sqlstr = q{
-        select distinct name "Package Name", 'PACKAGES' "Type", owner "Owner"
-        from all_source
-        where type = 'PACKAGE'
-        order by name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select distinct name "Package Name", 'PACKAGES' "Type", owner "Owner" from all_source}
+        ,q{ order by name }
+        ,$format
+        ,$opts
+        ,q{type = 'PACKAGE'}
+        ,$option
+        ,q{name}
+        ,$option_value 
+      );
+
     } elsif($object eq 'indexes') {
-      my $sqlstr = q{
-        select index_name "Index Name", 'INDEXES' "Type", owner "Owner"
-        from all_indexes
-        order by index_name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select index_name "Index Name", 'INDEXES' "Type", owner "Owner" from all_indexes}
+        ,q{ order by index_name }
+        ,$format
+        ,$opts
+        ,q{}
+        ,$option
+        ,q{index_name}
+        ,$option_value 
+      );
+
     } elsif($object eq 'indextypes') {
-      my $sqlstr = q{
-        select indextype_name "Indextype Name", 'INDEXTYPE' "Type", owner "Owner"
-        from all_indextypes
-        order by indextype_name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select indextype_name "Indextype Name", 'INDEXTYPE' "Type", owner "Owner" from all_indextypes}
+        ,q{ order by indextype_name }
+        ,$format
+        ,$opts
+        ,q{}
+        ,$option
+        ,q{indextype_name}
+        ,$option_value 
+      );
+
     } elsif($object eq 'libraries') {
-      my $sqlstr = q{
-        select library_name "library Name", 'LIBRARY' "Type", owner "Owner"
-        from all_libraries
-        order by library_name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select library_name "library Name", 'LIBRARY' "Type", owner "Owner" from all_libraries}
+        ,q{ order by library_name }
+        ,$format
+        ,$opts
+        ,q{}
+        ,$option
+        ,q{library_name}
+        ,$option_value 
+      );
+
     } elsif($object eq 'materialized views') {
-      my $sqlstr = q{
-        select mview_name "Materialized View Name", 'MATERIALIZED VIEW' "Type", owner "Owner"
-        from all_mviews
-        order by mview_name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select mview_name "Materialized View Name", 'MATERIALIZED VIEW' "Type", owner "Owner" from all_mviews}
+        ,q{ order by mview_name }
+        ,$format
+        ,$opts
+        ,q{}
+        ,$option
+        ,q{mview_name}
+        ,$option_value 
+      );
+
     } elsif($object eq 'snapshots') {
-      my $sqlstr = q{
-        select name "Snapshot Name", 'SNAPSHOT' "Type", owner "Owner"
-        from all_snapshots
-        order by name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select name "Snapshot Name", 'SNAPSHOT' "Type", owner "Owner" from all_snapshots}
+        ,q{ order by name }
+        ,$format
+        ,$opts
+        ,q{}
+        ,$option
+        ,q{name}
+        ,$option_value 
+      );
+
     } elsif($object eq 'synonyms') {
-      my $sqlstr = q{
-        select synonym_name "Synonym Name", 'SYNONYM' "Type", owner "Owner"
-        from all_synonyms
-        order by synonym_name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select synonym_name "Synonym Name", 'SYNONYM' "Type", owner "Owner" from all_synonyms}
+        ,q{ order by synonym_name }
+        ,$format
+        ,$opts
+        ,q{}
+        ,$option
+        ,q{synonym_name}
+        ,$option_value 
+      );
+
+      
     } elsif($object eq 'triggers') {
-      my $sqlstr = q{
-        select trigger_name "Trigger Name", 'TRIGGER' "Type", owner "Owner"
-        from all_triggers
-        order by trigger_name
-      };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
-                               op_text => $op_text});
+      
+      show_all_query(
+        q{select trigger_name "Trigger Name", 'TRIGGER' "Type", owner "Owner" from all_triggers}
+        ,q{ order by trigger_name }
+        ,$format
+        ,$opts
+        ,q{}
+        ,$option
+        ,q{trigger_name}
+        ,$option_value 
+      );
+
     } elsif($object eq 'waits') {
       my $sqlstr = q{
         select vs.username "Username",
@@ -3702,7 +3793,8 @@ Commands:
   desc[ribe] <object> Describe table, view, index, sequence, primary key, 
                         foreign key, constraint or trigger
                         object = [<schema>.]<object>[\@dblink]
-  show [all] <string> Shows [all] objects of a certain type
+  show [all] <string> { like <name> }
+                      Shows [all] objects of a certain type
                         string = tables, views, objects, sequences, clusters,
                                  dimensions, functions, procedures, packages,
                                  indexes, indextypes, libraries, snapshots
