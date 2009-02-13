@@ -1102,6 +1102,7 @@ sub process_input {
       $input =~ /^\s*autocommit\s*(.*)$/i and autocommit_toggle(),  last SWITCH;
       $input =~ /^\s*commit/i and commit_cmd(),                     last SWITCH;
       $input =~ /^\s*rollback/i and rollback_cmd(),                 last SWITCH;
+      $input =~ /^\s*(search\s*[^;\/\\]+)\s*$/i and search_cmd($1,'table'),last SWITCH;
       $input =~ /^\s*(show\s*[^;\/\\]+)\s*$/i and show($1, 'table'),last SWITCH;
       $input =~ /^\s*(desc\s*[^;\/\\]+)\s*$/i and describe($1, 'table'),
                                                                     last SWITCH;
@@ -2726,6 +2727,54 @@ sub set_cmd {
      
   }  
 }
+
+sub search_cmd {
+  my($input, $format, $num_rows, $op, $op_text) = @_;
+  debugmsg(3, "search called", @_);
+  
+  if($input =~ /^\s*search\s+([a-zA-Z0-9_\$\#\s]+)\s+(?:for)\s+([a-zA-Z0-9_\$\#]+)/) {
+    debugmsg(3, "search reg", $1,$2, $3);
+    
+    if ($1 eq 'constraints'){
+      my $sqlstr = q{
+         select 
+          CONSTRAINT_NAME "Constraint Name"
+          ,decode(constraint_type, 
+            'C', 'Check', 
+            'P', 'Primary Key', 
+            'R', 'Foreign Key', 
+            'U', 'Unique', 
+            '') "Type"
+          ,TABLE_NAME "Table Name"
+          ,INDEX_NAME "Index Name"
+          ,STATUS  "Status"
+        from all_constraints 
+        where  owner = ?  and (
+          CONSTRAINT_NAME like ?
+        )   
+      };
+      query(
+        $sqlstr
+        ,$format
+        ,{
+            num_rows => $num_rows
+            ,op => $op
+            ,op_text => $op_text
+        }
+        , uc $dbuser    
+        , "%".uc($2)."%"
+      );
+                               
+    }else{
+      query_err("search", "Unsupported search type", $input);
+    }
+    
+  }else{
+    query_err("search", "Unsupported search type", $input);
+  }
+  
+  
+}
     
 sub query {
   my($sqlstr, $format, $opts, @bind_vars) = @_;
@@ -3635,6 +3684,9 @@ Commands:
   show [all] waits    Shows [all] waits
   show plan           Shows the last EXPLAIN PLAN ran
   show errors         Shows errors from PL/SQL object creation
+  search <string> for <name> 
+                      Search Objects by name 
+                        string = constraints
   l[ist], \\l, \\p      List the contents of the current buffer
   cl[ear] [buffer], \\c
                       Clear the current buffer
