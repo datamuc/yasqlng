@@ -1942,15 +1942,28 @@ sub show {
     } else {
       query_err("show", "Unsupported show type", $input);
     }
-  } elsif($input =~ /^\s*show\s+all\s+([a-zA-Z0-9_\$\#\s]+)\s*$/) {
+  } elsif($input =~ /^\s*show\s+all\s+([a-zA-Z0-9_\$\#]+)\s*([a-zA-Z0-9_\'\$\#\%\s]*)$/) {
+    
     if($1 eq 'tables') {
       my $sqlstr = q{
         select table_name "Table Name", 'TABLE' "Type", owner "Owner"
         from all_tables
-        order by table_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
-                               op_text => $op_text});
+      my $post_sqlstr = ' order by table_name ';
+      my $sql_like;
+      if ($2 =~ /\s*(\w+)\s+[']?([a-zA-Z0-9_\$\#\%]+)[']?/){  
+          if (lc($1) eq 'like'){
+            $sqlstr .= ' where table_name like ? ';
+            $sql_like = uc($2);
+          };   
+          query($sqlstr.$post_sqlstr , $format, {num_rows => $num_rows, op => $op,
+                                   op_text => $op_text}, $sql_like || undef );
+          
+      }else{
+        query($sqlstr.$post_sqlstr , $format, {num_rows => $num_rows, op => $op,
+                                 op_text => $op_text} );
+        
+      }  
     } elsif($1 eq 'views') {
       my $sqlstr = q{
         select view_name "View Name", 'VIEW' "Type", owner "Owner"
