@@ -1791,6 +1791,19 @@ sub autocommit_toggle {
   print "AutoCommit is now " . ($dbh->{AutoCommit} ? 'on' : 'off') . "\n";
 }
 
+sub show_all_query {
+  my ( $select, $order_by, $format, $opts, $option, $option_key, $option_value ) = @_;
+  debugmsg(3, "show_all_query called");
+  
+  if ( $option eq 'like' ){
+    my $sqlstr = $select ." where ". $option_key ." like ? " . $order_by;
+    query($sqlstr , $format, $opts, $option_value );
+  }else{
+    query($select.$order_by , $format, $opts );
+  };   
+
+}
+
 sub show {
   my($input, $format, $num_rows, $op, $op_text) = @_;
   debugmsg(3, "show called", @_);
@@ -1944,26 +1957,31 @@ sub show {
     }
   } elsif($input =~ /^\s*show\s+all\s+([a-zA-Z0-9_\$\#]+)\s*([a-zA-Z0-9_\'\$\#\%\s]*)$/) {
     my $object = $1;
+    my $option = '';
+    my $option_value = '';
+    my $opts = {
+      num_rows => $num_rows
+      ,op => $op
+      ,op_text => $op_text
+    };
+    
+    if ($2 =~ /\s*(\w+)\s+[']?([a-zA-Z0-9_\$\#\%]+)[']?/){
+      $option = lc($1);
+      $option_value = uc($2);
+    }
+    debugmsg(3,"show all '$object'");
     if($object eq 'tables') {
-      my $sqlstr = q{
-        select table_name "Table Name", 'TABLE' "Type", owner "Owner"
-        from all_tables
-      };
-      my $post_sqlstr = ' order by table_name ';
-      my $sql_like;
-      if ($2 =~ /\s*(\w+)\s+[']?([a-zA-Z0-9_\$\#\%]+)[']?/){  
-          if (lc($1) eq 'like'){
-            $sqlstr .= ' where table_name like ? ';
-            $sql_like = uc($2);
-          };   
-          query($sqlstr.$post_sqlstr , $format, {num_rows => $num_rows, op => $op,
-                                   op_text => $op_text}, $sql_like || undef );
+
+      show_all_query(
+        q{select table_name "Table Name", 'TABLE' "Type", owner "Owner" from all_tables }
+        ,q{ order by table_name }
+        ,$format
+        ,$opts
+        ,$option
+        ,'table_name'
+        ,$option_value 
+      );
           
-      }else{
-        query($sqlstr.$post_sqlstr , $format, {num_rows => $num_rows, op => $op,
-                                 op_text => $op_text} );
-        
-      }  
     } elsif($object eq 'views') {
       my $sqlstr = q{
         select view_name "View Name", 'VIEW' "Type", owner "Owner"
