@@ -1964,6 +1964,43 @@ sub show {
       query($sqlstr, 'single_output', {num_rows => $num_rows, op => $op, 
                                op_text => $op_text}, uc($2), uc($dbuser));
       $dbh->{LongReadLen} = $prev_LongReadLen;
+    } elsif($1 eq 'dependencies') {
+      my $table = $2;
+      my $sqlstr = q{
+	  select
+		  a.table_name,
+		  b.column_name,
+		  c.table_name parent_table,
+		  d.column_name parent_pk
+		  null child_table,
+		  null child_pk,
+	  from all_constraints a,
+	       all_cons_columns b,
+	       all_constraints c,
+	       all_cons_columns d
+	  where a.constraint_name = b.constraint_name
+	    and b.table_name= ?
+	    and a.r_constraint_name is not null
+	    and a.r_constraint_name=c.constraint_name
+	    and c.constraint_name=d.constraint_name
+	  UNION
+	  SELECT
+		  a.owner||'.'||a.table_name parent_table,
+		  b.column_name,
+		  null as  parent_table,
+		  null as  parent_pk,
+		  c.table_name child_table, --table_name,
+		  d.column_name child_pk --child_pk,
+	  FROM all_constraints a,
+	       all_cons_columns b,
+	       all_constraints c,
+	       all_cons_columns d 
+	  WHERE a.constraint_name = b.constraint_name
+	      AND a.constraint_name = c.r_constraint_name
+	      AND c.constraint_name = d.constraint_name
+	      AND a.table_name = ?
+	  ORDER BY child_table
+      };
     } else {
       query_err("show", "Unsupported show type", $input);
     }
@@ -2733,32 +2770,7 @@ sub describe {
                  'BFILE','BFILE',
                  data_type || ' ???'
                ) "Type",
-               data_default "Default",
-               (
-                  SELECT
-                     '<- ' || ac2.table_name || '(' || acc2.column_name || ')'
-                  FROM all_constraints ac1, all_cons_columns acc1,
-                       all_constraints ac2, all_cons_columns acc2
-                  WHERE ac1.constraint_name = acc1.constraint_name
-                    and ac1.constraint_name = ac2.r_constraint_name
-                    and ac2.constraint_name = acc2.constraint_name
-                    and ac1.table_name = atc.table_name
-                    and ac1.owner = atc.owner
-                    and acc1.column_name = atc.column_name
-               ) "Dependencies",
-               (
-                  select
-                    '-> ' || c.table_name || '(' || d.column_name || ')'
-                  from all_constraints a, all_cons_columns b,
-                       all_constraints c, all_cons_columns d
-                  where a.constraint_name = b.constraint_name
-                    and b.table_name=atc.table_name
-                    and a.owner = atc.owner
-                    and a.r_constraint_name is not null
-                    and a.r_constraint_name=c.constraint_name
-                    and c.constraint_name=d.constraint_name
-                    and b.column_name = atc.column_name
-               ) "Depends on"
+               data_default "Default"
           from all_tab_columns atc
          where table_name = ?
            and owner = ?
