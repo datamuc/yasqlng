@@ -1102,7 +1102,6 @@ sub process_input {
       $input =~ /^\s*autocommit\s*(.*)$/i and autocommit_toggle(),  last SWITCH;
       $input =~ /^\s*commit/i and commit_cmd(),                     last SWITCH;
       $input =~ /^\s*rollback/i and rollback_cmd(),                 last SWITCH;
-      $input =~ /^\s*(search\s*[^;\/\\]+)\s*$/i and search_cmd($1,'table'),last SWITCH;
       $input =~ /^\s*(show\s*[^;\/\\]+)\s*$/i and show($1, 'table'),last SWITCH;
       $input =~ /^\s*(desc\s*[^;\/\\]+)\s*$/i and describe($1, 'table'),
                                                                     last SWITCH;
@@ -1792,7 +1791,7 @@ sub autocommit_toggle {
 }
 
 sub show_all_query {
-  my ( $select, $order_by, $format, $opts, $static_where , $option, $option_key, $option_value,  ) = @_;
+  my ( $select, $order_by, $format, $opts, $static_where , $option, $option_key, @values ) = @_;
   debugmsg(3, "show_all_query called");
   my $where = ' where ';
   if ( $static_where ) {
@@ -1804,7 +1803,7 @@ sub show_all_query {
     $sqlstr .= ' and ' if ( $static_where );
     $sqlstr .= $option_key ." like ? " . $order_by;
     
-    query($sqlstr , $format, $opts, $option_value );
+    query($sqlstr , $format, $opts, @values );
   }else{
     my $sqlstr = $select;
     $sqlstr .= $where if ($static_where);
@@ -2212,6 +2211,34 @@ sub show {
       };
       query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
                                op_text => $op_text});
+                               
+    } elsif( $object eq 'constraints' ){
+      
+      my $sqlstr = q{
+         select 
+          CONSTRAINT_NAME "Constraint Name"
+          ,decode(constraint_type, 
+            'C', 'Check', 
+            'P', 'Primary Key', 
+            'R', 'Foreign Key', 
+            'U', 'Unique', 
+            '') "Type"
+          ,TABLE_NAME "Table Name"
+          ,INDEX_NAME "Index Name"
+          ,STATUS  "Status"
+        from all_constraints 
+      };
+       show_all_query(
+          $sqlstr
+          ,q{ order by CONSTRAINT_NAME }
+          ,$format
+          ,$opts
+          ,q{}
+          ,$option
+          ,q{CONSTRAINT_NAME}
+          ,$option_value 
+        );
+                 
     } else {
       query_err("show", "Unsupported show type", $input);
     }
@@ -2850,54 +2877,6 @@ sub set_cmd {
   }  
 }
 
-sub search_cmd {
-  my($input, $format, $num_rows, $op, $op_text) = @_;
-  debugmsg(3, "search called", @_);
-  
-  if($input =~ /^\s*search\s+([a-zA-Z0-9_\$\#\s]+)\s+(?:for)\s+([a-zA-Z0-9_\$\#]+)/) {
-    debugmsg(3, "search reg", $1,$2, $3);
-    
-    if ($1 eq 'constraints'){
-      my $sqlstr = q{
-         select 
-          CONSTRAINT_NAME "Constraint Name"
-          ,decode(constraint_type, 
-            'C', 'Check', 
-            'P', 'Primary Key', 
-            'R', 'Foreign Key', 
-            'U', 'Unique', 
-            '') "Type"
-          ,TABLE_NAME "Table Name"
-          ,INDEX_NAME "Index Name"
-          ,STATUS  "Status"
-        from all_constraints 
-        where  owner = ?  and (
-          CONSTRAINT_NAME like ?
-        )   
-      };
-      query(
-        $sqlstr
-        ,$format
-        ,{
-            num_rows => $num_rows
-            ,op => $op
-            ,op_text => $op_text
-        }
-        , uc $dbuser    
-        , "%".uc($2)."%"
-      );
-                               
-    }else{
-      query_err("search", "Unsupported search type", $input);
-    }
-    
-  }else{
-    query_err("search", "Unsupported search type", $input);
-  }
-  
-  
-}
-    
 sub query {
   my($sqlstr, $format, $opts, @bind_vars) = @_;
   debugmsg(3, "query called", @_);
@@ -3797,8 +3776,10 @@ Commands:
                       Shows [all] objects of a certain type
                         string = tables, views, objects, sequences, clusters,
                                  dimensions, functions, procedures, packages,
-                                 indexes, indextypes, libraries, snapshots
+                                 indexes, indextypes, libraries, snapshots,
                                  materialized views, synonyms, triggers,
+                                 constraints
+                        name : use % for wildcard         
   show <string> on|for <object>
                       Shows properties for a particular object
                         string = indexes, constraints, keys, checks, triggers,
@@ -3807,9 +3788,6 @@ Commands:
   show [all] waits    Shows [all] waits
   show plan           Shows the last EXPLAIN PLAN ran
   show errors         Shows errors from PL/SQL object creation
-  search <string> for <name> 
-                      Search Objects by name 
-                        string = constraints
   l[ist], \\l, \\p      List the contents of the current buffer
   cl[ear] [buffer], \\c
                       Clear the current buffer
