@@ -3829,7 +3829,7 @@ Commands:
   show <string> on|for <object>
                       Shows properties for a particular object
                         string = indexes, constraints, keys, checks, triggers,
-                                 query
+                                 query, deps
   show processes      Shows logged in users
   show [all] waits    Shows [all] waits
   show plan           Shows the last EXPLAIN PLAN ran
