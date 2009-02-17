@@ -1964,43 +1964,50 @@ sub show {
       query($sqlstr, 'single_output', {num_rows => $num_rows, op => $op, 
                                op_text => $op_text}, uc($2), uc($dbuser));
       $dbh->{LongReadLen} = $prev_LongReadLen;
-    } elsif($1 eq 'dependencies') {
+    } elsif($1 eq 'deps') {
       my $table = $2;
       my $sqlstr = q{
-	  select
-		  a.table_name,
-		  b.column_name,
-		  c.table_name parent_table,
-		  d.column_name parent_pk
-		  null child_table,
-		  null child_pk,
-	  from all_constraints a,
-	       all_cons_columns b,
-	       all_constraints c,
-	       all_cons_columns d
-	  where a.constraint_name = b.constraint_name
-	    and b.table_name= ?
-	    and a.r_constraint_name is not null
-	    and a.r_constraint_name=c.constraint_name
-	    and c.constraint_name=d.constraint_name
-	  UNION
-	  SELECT
-		  a.owner||'.'||a.table_name parent_table,
-		  b.column_name,
-		  null as  parent_table,
-		  null as  parent_pk,
-		  c.table_name child_table, --table_name,
-		  d.column_name child_pk --child_pk,
-	  FROM all_constraints a,
-	       all_cons_columns b,
-	       all_constraints c,
-	       all_cons_columns d 
-	  WHERE a.constraint_name = b.constraint_name
-	      AND a.constraint_name = c.r_constraint_name
-	      AND c.constraint_name = d.constraint_name
-	      AND a.table_name = ?
-	  ORDER BY child_table
+        select column_name,parent_table,parent_pk,child_table,child_pk from (
+         select
+                 a.owner,
+                 a.table_name,
+                 b.column_name,
+                 c.owner || '.' || c.table_name parent_table,
+                 d.column_name parent_pk,
+                 null child_table,
+                 null child_pk
+         from all_constraints a,
+              all_cons_columns b,
+              all_constraints c,
+              all_cons_columns d
+         where a.constraint_name = b.constraint_name
+           and a.r_constraint_name is not null
+           and a.r_constraint_name=c.constraint_name
+           and c.constraint_name=d.constraint_name
+           and a.owner = b.owner and c.owner = d.owner
+         UNION
+         SELECT
+                 a.owner,
+                 a.table_name parent_table,
+                 b.column_name,
+                 null as  parent_table,
+                 null as  parent_pk,
+                 c.owner || '.' || c.table_name child_table, --table_name,
+                 d.column_name child_pk --child_pk,
+         FROM all_constraints a,
+              all_cons_columns b,
+              all_constraints c,
+              all_cons_columns d
+         WHERE a.constraint_name = b.constraint_name
+             AND a.constraint_name = c.r_constraint_name
+             AND c.constraint_name = d.constraint_name
+             and a.owner = b.owner and c.owner = d.owner
+       ) where table_name like ?
+           and owner like ?
+         ORDER BY 1,2,3,4,5
       };
+      query($sqlstr, 'table', {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text}, uc($table), uc($dbuser));
     } else {
       query_err("show", "Unsupported show type", $input);
     }
