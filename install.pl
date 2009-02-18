@@ -19,9 +19,9 @@ unless(-e "$sysconfdir/yasql.conf") {
        ."directives\n";
 }
 
-print "Installing yasql.1 man page to $mandir/man1/yasql.1\n";
-system("mkdir -p $mandir/man1");
-system("$installpath -m 644 yasql.1 $mandir/man1/yasql.1");
+# print "Installing yasql.1 man page to $mandir/man1/yasql.1\n";
+# system("mkdir -p $mandir/man1");
+# system("$installpath -m 644 yasql.1 $mandir/man1/yasql.1");
 
 print "Installation successfull\n";
 
