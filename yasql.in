@@ -2008,6 +2008,30 @@ sub show {
       };
       query($sqlstr, 'table', {num_rows => $num_rows, op => $op, 
                                op_text => $op_text}, uc($table), uc($dbuser));
+    } elsif($1 eq 'ddl') {
+      my $table = $2;
+      my $sqlstr = q{
+          SELECT DBMS_METADATA.GET_DDL('TABLE', ?, ?) FROM dual
+        union all
+          SELECT DBMS_METADATA.GET_DEPENDENT_DDL('INDEX', ?, ?) FROM dual
+        union all
+          SELECT DBMS_METADATA.GET_DEPENDENT_DDL ('COMMENT', ?, ?) FROM dual
+        union all 
+          SELECT DBMS_METADATA.GET_DEPENDENT_DDL('TRIGGER', ?, ?) FROM dual  
+      };
+      my $prev_LongReadLen = $dbh->{LongReadLen};
+      $dbh->{LongReadLen} = 16_000;
+      query($sqlstr, 'quiet-list', {num_rows => $num_rows, op => $op, op_text => $op_text}
+        ,uc($table)
+        ,uc($dbuser)
+        ,uc($table)
+        ,uc($dbuser)
+        ,uc($table)
+        ,uc($dbuser)
+        ,uc($table)
+        ,uc($dbuser)
+      );
+      $dbh->{LongReadLen} = $prev_LongReadLen;                      
     } else {
       query_err("show", "Unsupported show type", $input);
     }
@@ -3420,10 +3444,11 @@ sub format_output {
 
     return($rows_selected, 'selected');
         
-  } elsif($format eq 'list') {
+  } elsif($format eq 'list' || $format eq 'quiet-list' ) {
     # output in a nice list format, which is where we print each row in turn,
     # with each column on it's own line
-    
+    # quiet-list doesn't displat *** Row...
+    my $quiet = ($format eq 'quiet-list') ? 1 : 0;
     my $fields = $sth->{NAME};
    
     print "\r[K" if $op eq '<';
@@ -3431,11 +3456,15 @@ sub format_output {
     
     my $count = 0;
     while(my $res = $sth->fetch()) {
-      print FOUT "\n**** Row: " . ($count+1) . "\n";
+      print FOUT "\n**** Row: " . ($count+1) . "\n" unless ($quiet);
       for( my $i = 0; $i < @$fields; $i++ ) {
         my $data = $res->[$i];
         $data = 'NULL' unless defined $data;
-        print FOUT $fields->[$i] . ": " . $data . "\n";
+        if ($quiet) {
+          print FOUT $data . "\n";
+        }else{
+          print FOUT $fields->[$i] . ": " . $data . "\n";
+        }  
       }
       $count++;
       last if $num_rows && $count >= $num_rows;
@@ -3829,7 +3858,7 @@ Commands:
   show <string> on|for <object>
                       Shows properties for a particular object
                         string = indexes, constraints, keys, checks, triggers,
-                                 query, deps
+                                 query, deps, ddl
   show processes      Shows logged in users
   show [all] waits    Shows [all] waits
   show plan           Shows the last EXPLAIN PLAN ran
