@@ -1967,7 +1967,13 @@ sub show {
     } elsif($1 eq 'deps') {
       my $table = $2;
       my $sqlstr = q{
-        select column_name,parent_table,parent_pk,child_table,child_pk from (
+        select 
+          column_name "Column Name"
+          ,parent_table "Parent Table"
+          ,parent_pk "Parent Primary Key"
+          ,child_table "Child Table"
+          ,child_pk "Child Primary Key"
+        from (
          select
                  a.owner,
                  a.table_name,
