@@ -17,4 +17,7 @@ check : default
 	./yasql --help > /dev/null
 
 clean :
-	/bin/rm -f config.cache config.log config.status yasql
+	/bin/rm -f config.cache config.log config.status yasql yasql.1
+
+distclean : clean
+	/bin/rm -f Makefile
