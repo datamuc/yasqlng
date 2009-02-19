@@ -5,7 +5,6 @@
 # *.[oa]
 # *~
 yasql
-yasql.1
 *~
 config.cache
 config.status

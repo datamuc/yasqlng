@@ -26,14 +26,5 @@ for(my $i = 0; <YIN>; $i++) {
 close(YOUT);
 close(YIN);
 
-eval {
-  require Pod::Man;
-  my $pod = Pod::Man->new(section=>1);
-  $pod->parse_from_file ('yasql', 'yasql.1');
-};
-if($@) {
-  warn "Generating man page failed, install Pod::Man to fix this"
-}
-
 print "Configuration successful\n";
 
