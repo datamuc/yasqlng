@@ -1021,6 +1021,7 @@ sub get_up {
 }
 
 sub check_oracle_home {
+  
   # This checks for the ORACLE_HOME environment variable and dies if it's
   # not set
   lerr("Please set your ORACLE_HOME environment variable!") 
@@ -1108,6 +1109,7 @@ sub process_input {
       $input =~ /^\s*(desc\s*[^;\/\\]+)\s*$/i and describe($1, 'table'),
                                                                     last SWITCH;
       $input =~ /^\s*(set\s*[^;\/\\]+)\s*$/i and set_cmd($1),       last SWITCH;
+      $input =~ /^\s*(let\s*[^;\/\\]*)\s*$/i and let_cmd($1),       last SWITCH;
       $input =~ /^\s*exec(?:ute)?\s*(.*)\s*$/i and exec_cmd($1),    last SWITCH;
       $input =~ /^\s*\\d\s*$/ and show('show objects', 'table'),    last SWITCH;
       $input =~ /^\s*\\dt\s*$/ and show('show tables', 'table'),    last SWITCH;
@@ -2659,17 +2661,17 @@ sub describe {
           }
         }
 
-	# open the redirection file
-	if($op && $op eq '>' || $op eq '>>') {
-    	    ($op_text) = glob($op_text);
-    	    debugmsg(3, "Opening file '$op_text' for output redirection using [$op]");
-	    open(FOUT, $op . $op_text) || do query_err('redirect',"Cannot open file '$op_text' for writing: $!", '');
-        } elsif($op eq '|') {
-    	    debugmsg(3, "Opening pipe to '$op_text' for output redirection");
-	    open(FOUT, $op . $op_text) || do query_err('pipe',"Cannot open pipe '$op_text': $!", '');
-	} else {
-	    open(FOUT, ">&STDOUT");
-	}
+      	# open the redirection file
+      	if($op && $op eq '>' || $op eq '>>') {
+          	    ($op_text) = glob($op_text);
+          	    debugmsg(3, "Opening file '$op_text' for output redirection using [$op]");
+      	    open(FOUT, $op . $op_text) || do query_err('redirect',"Cannot open file '$op_text' for writing: $!", '');
+              } elsif($op eq '|') {
+          	    debugmsg(3, "Opening pipe to '$op_text' for output redirection");
+      	    open(FOUT, $op . $op_text) || do query_err('pipe',"Cannot open pipe '$op_text': $!", '');
+      	} else {
+      	    open(FOUT, ">&STDOUT");
+      	}
         
         if($opt_headers) {
           # Print headers
@@ -2696,7 +2698,7 @@ sub describe {
         }
         print FOUT "\n";
 
-	close(FOUT);
+	      close(FOUT);
 
         return();
       }
@@ -2924,7 +2926,24 @@ sub describe {
     }
   }
 }
-
+sub let_cmd {
+  my($input) = @_;
+  debugmsg(3, "let_cmd called", @_);
+  my @book_keys = qw/sql_query_in_error auto_complete edit_history fast_describe complete_objects complete_tables extended_complete_list extended_benchmarks column_wildcards complete_columns auto_commit commit_on_exit command_complete_list long_trunc_ok/; 
+   
+  if ($input =~ /^\s*let\s*(\w+)?\s*/i ){
+    my @print_keys =  keys %conf;
+    @print_keys = grep(/$1/,@print_keys) if ($1);
+    
+    foreach my $key ( @print_keys ){
+      my $print_conf = $conf{$key};
+      $print_conf = ($conf{$key}) ? 'On' : 'Off' if ( grep(/$key/,@book_keys) ) ; 
+      printf("%25s : %1s\n",$key,$print_conf);
+    }
+  }else{
+    print "usage let <config name>\n";
+  }
+}
 sub set_cmd {
   my($input) = @_;
   debugmsg(3, "set_cmd called", @_);
@@ -3901,7 +3920,8 @@ Commands:
                            [long_read_len <size>]
                            || [ fast_describe [on|off]]
                            || [ serverout{put} [on|off] {size <size>} ]
-                        ]   
+                        ]
+  let <search string> Display all configurations                        
  
 Queries:
   All other input is treated as a query, and is sent straight to the database.
