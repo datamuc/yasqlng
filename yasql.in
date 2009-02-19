@@ -2969,6 +2969,8 @@ sub set_cmd {
       $conf{fast_describe} = (lc($1) eq 'on') ? 1 : 0;
       print "fast_describe is now " . ($conf{fast_describe} ? 'on' : 'off') . "\n";
      
+  }elsif($input =~ /^\s*set\s+(\w+)\s*/ ){
+    print "Can't set option $1\n";
   }  
 }
 
