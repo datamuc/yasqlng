@@ -1971,10 +1971,13 @@ sub show {
       my $sqlstr = q{
         select 
           column_name "Column Name"
-          ,parent_table "Parent Table"
-          ,parent_pk "Parent Primary Key"
-          ,child_table "Child Table"
-          ,child_pk "Child Primary Key"
+          , case when parent_pk is not null then
+            parent_table || '(' || parent_pk || ')'
+            else null end "Parent"
+          , case when child_pk is not null then
+            child_table || '(' || child_pk || ')'
+            else null end "Child"
+          , constraint_name "Constraint"
         from (
          select
                  a.owner,
@@ -1983,7 +1986,8 @@ sub show {
                  c.owner || '.' || c.table_name parent_table,
                  d.column_name parent_pk,
                  null child_table,
-                 null child_pk
+                 null child_pk,
+                 c.constraint_name
          from all_constraints a,
               all_cons_columns b,
               all_constraints c,
@@ -2001,7 +2005,8 @@ sub show {
                  null as  parent_table,
                  null as  parent_pk,
                  c.owner || '.' || c.table_name child_table, --table_name,
-                 d.column_name child_pk --child_pk,
+                 d.column_name child_pk,
+                 c.constraint_name
          FROM all_constraints a,
               all_cons_columns b,
               all_constraints c,
@@ -2012,7 +2017,7 @@ sub show {
              and a.owner = b.owner and c.owner = d.owner
        ) where table_name like ?
            and owner like ?
-         ORDER BY 1,2,3,4,5
+         ORDER BY 1,2,3,4
       };
       query($sqlstr, 'table', {num_rows => $num_rows, op => $op, 
                                op_text => $op_text}, uc($table), uc($dbuser));
