@@ -1021,7 +1021,6 @@ sub get_up {
 }
 
 sub check_oracle_home {
-  
   # This checks for the ORACLE_HOME environment variable and dies if it's
   # not set
   lerr("Please set your ORACLE_HOME environment variable!") 
@@ -2697,7 +2696,7 @@ sub describe {
         }
         print FOUT "\n";
 
-	      close(FOUT);
+	close(FOUT);
 
         return();
       }
@@ -3922,7 +3921,7 @@ Commands:
                            || [ fast_describe [on|off]]
                            || [ serverout{put} [on|off] {size <size>} ]
                         ]
-  let <search string> Display all configurations                        
+  let <search string> Display all configurations
  
 Queries:
   All other input is treated as a query, and is sent straight to the database.
