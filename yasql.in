@@ -1981,7 +1981,7 @@ sub show {
                  b.column_name,
                  c.owner || '.' || c.table_name tablett,
                  d.column_name pk,
-                 c.constraint_name,
+                 a.constraint_name,
 		 'parent ->' type
          from all_constraints a,
               all_cons_columns b,
