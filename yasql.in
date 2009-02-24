@@ -1971,23 +1971,18 @@ sub show {
       my $sqlstr = q{
         select 
           column_name "Column Name"
-          , case when parent_pk is not null then
-            parent_table || '(' || parent_pk || ')'
-            else null end "Parent"
-          , case when child_pk is not null then
-            child_table || '(' || child_pk || ')'
-            else null end "Child"
+          , type "Type"
+          , tablett || '(' || pk || ')' "Reference"
           , constraint_name "Constraint"
         from (
          select
                  a.owner,
                  a.table_name,
                  b.column_name,
-                 c.owner || '.' || c.table_name parent_table,
-                 d.column_name parent_pk,
-                 null child_table,
-                 null child_pk,
-                 c.constraint_name
+                 c.owner || '.' || c.table_name tablett,
+                 d.column_name pk,
+                 c.constraint_name,
+		 'parent ->' type
          from all_constraints a,
               all_cons_columns b,
               all_constraints c,
@@ -2002,11 +1997,10 @@ sub show {
                  a.owner,
                  a.table_name parent_table,
                  b.column_name,
-                 null as  parent_table,
-                 null as  parent_pk,
-                 c.owner || '.' || c.table_name child_table, --table_name,
-                 d.column_name child_pk,
-                 c.constraint_name
+                 c.owner || '.' || c.table_name tablett,
+                 d.column_name pk,
+                 c.constraint_name,
+		 'child  <-' as type
          FROM all_constraints a,
               all_cons_columns b,
               all_constraints c,
@@ -2017,7 +2011,7 @@ sub show {
              and a.owner = b.owner and c.owner = d.owner
        ) where table_name like ?
            and owner like ?
-         ORDER BY 1,2,3,4
+         ORDER BY 2,1,3,4
       };
       query($sqlstr, 'table', {num_rows => $num_rows, op => $op, 
                                op_text => $op_text}, uc($table), uc($dbuser));
