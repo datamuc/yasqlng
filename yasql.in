@@ -3472,7 +3472,7 @@ sub format_output {
   } elsif($format eq 'list' || $format eq 'quiet-list' ) {
     # output in a nice list format, which is where we print each row in turn,
     # with each column on it's own line
-    # quiet-list doesn't displat *** Row...
+    # quiet-list doesn't display *** Row...
     my $quiet = ($format eq 'quiet-list') ? 1 : 0;
     my $fields = $sth->{NAME};
    
