@@ -4229,9 +4229,9 @@ usefull connection information to make the actual connection.
 The ORACLE_SID environment variable must be set unless you specify one with the 
 -s option (see options above).
 
-=item Term::Readline
+=item Term::ReadLine
 
-Term::Readline must be installed (it is with most Perl installations), but more 
+Term::ReadLine must be installed (it is with most Perl installations), but more 
 importantly, installing Term::ReadLine::Gnu from CPAN will greatly enhance the 
 usability.
 
