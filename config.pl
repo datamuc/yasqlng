@@ -6,6 +6,7 @@ my $perlpath = shift;
 my $bindir = shift;
 my $mandir = shift;
 my $sysconfdir = shift;
+my $version = shift;
 
 # read in yasql
 open(YIN, "yasql.in") or die("Could not open yasql.in! $!");
@@ -18,6 +19,8 @@ for(my $i = 0; <YIN>; $i++) {
     print YOUT "#!" . $perlpath . "\n";
   } elsif(/^\$sysconfdir = /) {
     print YOUT "\$sysconfdir = \"" . $sysconfdir . "\";\n";
+  } elsif(/^  \$VERSION = /) {
+    print YOUT "  \$VERSION = \"" . $version . "\";\n";
   } else {
     print YOUT;
   }

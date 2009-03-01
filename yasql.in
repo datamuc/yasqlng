@@ -115,8 +115,7 @@ interface();
 ###########  non-self-loaded functions  ########################################
 
 sub BEGIN {
-  $Id = '$Id: yasql,v 1.83 2005/05/09 02:07:13 nshafer Exp nshafer $';
-  ($VERSION) = $Id =~ /Id: \S+ (\d+\.\d+)/;
+  $VERSION = 'unknown';
 }
 
 sub argv_sort {

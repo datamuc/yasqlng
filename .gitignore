@@ -7,7 +7,4 @@
 yasql
 yasql.1
 *~
-config.cache
-config.status
-config.log
-Makefile
+YASQL-VERSION-FILE
