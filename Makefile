@@ -26,6 +26,3 @@ check : default
 
 clean :
 	/bin/rm -f yasql yasql.1 YASQL-VERSION-FILE
-
-distclean : clean
-	/bin/rm -f Makefile
