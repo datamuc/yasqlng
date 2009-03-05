@@ -2466,10 +2466,10 @@ sub show {
                                op_text => $op_text});
     } elsif($1 eq 'locks') {
       my $sqlstr = q{
-        SELECT 
+        SELECT
         s.username "Username"
         ,s.osuser || '@' || s.MACHINE "User@Machine"
-        ,s.sid sid 
+        ,s.sid sid
         ,l.LMODE || ':' ||
          decode(L.LMODE,
             1,'No Lock',
@@ -2527,19 +2527,22 @@ sub show {
             'UN','User name lock',
             'US','Undo segment DDL lock',
             'WL','Being-written redo log instance lock',
-            'WS','Write-atomic-log-switch global enqueue lock') "Lock Type" 
-        ,CASE l.type 
-            WHEN  'TM' THEN (SELECT  OBJECT_TYPE || ' : ' || OWNER || '.' || OBJECT_NAME FROM ALL_OBJECTS where object_id = l.id1 )
-            ELSE 'unknown'
-        END AS "Locked object"
+            'WS','Write-atomic-log-switch global enqueue lock') "Lock Type"
+        ,CASE l.type
+            WHEN  'TM' THEN (
+               SELECT  OBJECT_TYPE || ' : ' || OWNER || '.' || OBJECT_NAME
+               FROM ALL_OBJECTS
+               where object_id = l.id1
+            ) ELSE 'unknown'
+         END AS "Locked object"
         ,l.CTIME
         FROM V$LOCK l 
         LEFT JOIN V$SESSION s ON l.SID = s.SID
         WHERE l.type <> 'MR' AND s.type <> 'BACKGROUND'
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
-                               
+
     } elsif($1 eq 'waits') {
       my $sqlstr = q{
         select vs.username "Username",
