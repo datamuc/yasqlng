@@ -2469,6 +2469,7 @@ sub show {
         SELECT
         s.username "Username"
         ,s.osuser || '@' || s.MACHINE "User@Machine"
+        ,s.PROGRAM "Program"
         ,s.sid sid
         ,l.LMODE || ':' ||
          decode(L.LMODE,
