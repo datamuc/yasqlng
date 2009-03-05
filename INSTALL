@@ -65,22 +65,15 @@ Requirements:
 
 Installation:
 
- * ./configure
+ * gmake [options]
 
-   The following options to configure are used by YASQL:
-     --prefix=PREFIX         install architecture-independent files in PREFIX
+   The following options to configure are used by Makefile:
+     prefix=PREFIX         install architecture-independent files in PREFIX
                              [/usr/local]
-     --exec-prefix=EPREFIX   install architecture-dependent files in EPREFIX
-                             [same as prefix]
-     --bindir=DIR            user executables in DIR [EPREFIX/bin]
-     --sysconfdir=DIR        read-only single-machine data in DIR [PREFIX/etc]
-     --mandir=DIR            man documentation in DIR [PREFIX/man]
-
+     PERL=		   path to the perl binary
+     SHELL=		   path to a POSIX shell
      
- 
- * make
- 
- * make install
+ * gmake [options] install
 
 Etc:
 
@@ -88,14 +81,8 @@ type 'man yasql' for usage instructions.
 
 type 'yasql' to run it!
 
-To report success, run (replace First M. Last with your name):
- ( echo 'First M. Last'; grep "# .Id" `which yasql`; perl -V ) | \
- mail -s "YASQL install success" qzy@users.sourceforge.net
-
 To use the advanced features you should have the Term::Readline:Gnu perl 
 package installed, as well as the Time::HiRes module.  Both of these are 
 optional, but they really are nice to have.
 
-Please report any problems to qzy@users.sourceforge.net.
-
-Get the latest version from http://sourceforge.net/projects/yasql/
+Get the latest version from http://github.com/datamuc/yasqlng
