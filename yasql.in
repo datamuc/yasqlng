@@ -2464,6 +2464,82 @@ sub show {
       };
       query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
                                op_text => $op_text});
+    } elsif($1 eq 'locks') {
+      my $sqlstr = q{
+        SELECT 
+        s.username "Username"
+        ,s.osuser || '@' || s.MACHINE "User@Machine"
+        ,s.sid sid 
+        ,l.LMODE || ':' ||
+         decode(L.LMODE,
+            1,'No Lock',
+            2,'Row Share',
+            3,'Row Exclusive',
+            4,'Share',
+            5,'Share Row Exclusive',
+            6,'Exclusive','NONE') "LMode"
+        ,l.type || ':' ||
+         decode(l.type,
+            'BL','Buffer hash table instance lock',
+            'CF',' Control file schema global enqueue lock',
+            'CI','Cross-instance function invocation instance lock',
+            'CS','Control file schema global enqueue lock',
+            'CU','Cursor bind lock',
+            'DF','Data file instance lock',
+            'DL','Direct loader parallel index create',
+            'DM','Mount/startup db primary/secondary instance lock',
+            'DR','Distributed recovery process lock',
+            'DX','Distributed transaction entry lock',
+            'FI','SGA open-file information lock',
+            'FS','File set lock',
+            'HW','Space management operations on a specific segment lock',
+            'IN','Instance number lock',
+            'IR','Instance recovery serialization global enqueue lock',
+            'IS','Instance state lock',
+            'IV','Library cache invalidation instance lock',
+            'JQ','Job queue lock',
+            'KK','Thread kick lock',
+            'MB','Master buffer hash table instance lock',
+            'MM','Mount definition gloabal enqueue lock',
+            'MR','Media recovery lock',
+            'PF','Password file lock',
+            'PI','Parallel operation lock',
+            'PR','Process startup lock',
+            'PS','Parallel operation lock',
+            'RE','USE_ROW_ENQUEUE enforcement lock',
+            'RT','Redo thread global enqueue lock',
+            'RW','Row wait enqueue lock',
+            'SC','System commit number instance lock',
+            'SH','System commit number high water mark enqueue lock',
+            'SM','SMON lock',
+            'SN','Sequence number instance lock',
+            'SQ','Sequence number enqueue lock',
+            'SS','Sort segment lock',
+            'ST','Space transaction enqueue lock',
+            'SV','Sequence number value lock',
+            'TA','Generic enqueue lock',
+            'TD','DDL enqueue lock',
+            'TE','Extend-segment enqueue lock',
+            'TM','DML enqueue lock',
+            'TT','Temporary table enqueue lock',
+            'TX','Transaction enqueue lock',
+            'UL','User supplied lock',
+            'UN','User name lock',
+            'US','Undo segment DDL lock',
+            'WL','Being-written redo log instance lock',
+            'WS','Write-atomic-log-switch global enqueue lock') "Lock Type" 
+        ,CASE l.type 
+            WHEN  'TM' THEN (SELECT  OBJECT_TYPE || ' : ' || OWNER || '.' || OBJECT_NAME FROM ALL_OBJECTS where object_id = l.id1 )
+            ELSE 'unknown'
+        END AS "Locked object"
+        ,l.CTIME
+        FROM V$LOCK l 
+        LEFT JOIN V$SESSION s ON l.SID = s.SID
+        WHERE l.type <> 'MR' AND s.type <> 'BACKGROUND'
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+                               op_text => $op_text});
+                               
     } elsif($1 eq 'waits') {
       my $sqlstr = q{
         select vs.username "Username",
@@ -3884,6 +3960,7 @@ Commands:
                         string = indexes, constraints, keys, checks, triggers,
                                  query, deps, ddl
   show processes      Shows logged in users
+  show locks          Shows locks
   show [all] waits    Shows [all] waits
   show plan           Shows the last EXPLAIN PLAN ran
   show errors         Shows errors from PL/SQL object creation
