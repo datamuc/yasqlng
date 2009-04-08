@@ -2471,32 +2471,6 @@ sub show {
         ,s.osuser || '@' || s.MACHINE "User@Machine"
         ,s.PROGRAM "Program"
         ,s.sid sid
-        ,CASE to_char(l.BLOCK)
-          WHEN '1' THEN (
-            SELECT 
-              max(substr(SYS_CONNECT_BY_PATH(SID, ','),2)) SID
-            FROM (    
-              SELECT
-                l2.id1,
-                l2.id2,
-                l2.SID,
-                row_number() OVER (Partition by l2.id1 order by l2.id1 ) seq
-              FROM 
-                v$lock l2 
-              WHERE 
-                l2.block = 0
-            )
-            where id1 = l.id1
-              and id2 = l.id2   
-            start with
-              seq=1
-            connect by prior
-              seq+1=seq
-            and prior
-              id1=id1
-            GROUP BY id1
-          ) ELSE '0'
-          END AS "blocked SID"
         ,l.LMODE || ':' ||
          decode(L.LMODE,
             1,'No Lock',
@@ -2555,13 +2529,46 @@ sub show {
             'US','Undo segment DDL lock',
             'WL','Being-written redo log instance lock',
             'WS','Write-atomic-log-switch global enqueue lock') "Lock Type"
-        ,CASE l.type
-            WHEN  'TM' THEN (
+        ,CASE 
+            WHEN l.type = 'TM' THEN (
                SELECT  OBJECT_TYPE || ' : ' || OWNER || '.' || OBJECT_NAME
                FROM ALL_OBJECTS
                where object_id = l.id1
-            ) ELSE 'unknown'
-         END AS "Locked object"
+            )
+            WHEN l.type = 'TX' AND l.BLOCK = 1 THEN (
+              SELECT 
+                'Blocked Sessions: ' || max(substr(SYS_CONNECT_BY_PATH(SID, ','),2)) SID
+              FROM (    
+                SELECT
+                  l2.id1,
+                  l2.id2,
+                  l2.SID,
+                  row_number() OVER (Partition by l2.id1 order by l2.id1 ) seq
+                FROM 
+                  v$lock l2 
+                WHERE 
+                  l2.block = 0
+              )
+              where id1 = l.id1
+                and id2 = l.id2   
+              start with
+                seq=1
+              connect by prior
+                seq+1=seq
+              and prior
+                id1=id1
+              GROUP BY id1
+            )
+            WHEN l.type = 'TX' AND l.REQUEST > 0 THEN (
+              SELECT 
+                'Wait for Session: ' || SID
+              FROM V$LOCK l2 
+              WHERE l.id1 = l2.id1
+                and l.id2 = l2.id2
+                and block = 1
+            )
+            ELSE 'unknown'
+         END AS "Locked object / Lock Info"
         ,l.CTIME
         FROM V$LOCK l 
         LEFT JOIN V$SESSION s ON l.SID = s.SID
