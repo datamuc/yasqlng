@@ -3048,6 +3048,11 @@ sub let_cmd {
     foreach my $key ( @print_keys ){
       my $print_conf = $conf{$key};
       $print_conf = ($conf{$key}) ? 'On' : 'Off' if ( grep(/$key/,@bool_keys) ) ; 
+      
+      if ($key eq 'long_read_len' ){
+        $print_conf = $dbh->{LongReadLen};
+      }
+      
       printf("%25s : %1s\n",$key,$print_conf);
     }
   }else{
