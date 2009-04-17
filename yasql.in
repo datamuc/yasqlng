@@ -3080,6 +3080,7 @@ sub set_cmd {
   }elsif($input =~ /^\s*set\s+(long_read_len|LongReadLen)\s+(\d+)/i){
       debugmsg(2, "long_read_len/LongReadLen set to $2");
       $dbh->{LongReadLen} = $2;
+      $conf{long_read_len} = $2;
   }elsif($input =~ /^\s*set\s+fast_describe\s+(on|off)/i){
       $conf{fast_describe} = (lc($1) eq 'on') ? 1 : 0;
       print "fast_describe is now " . ($conf{fast_describe} ? 'on' : 'off') . "\n";
