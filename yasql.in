@@ -4118,6 +4118,26 @@ _EOM_
   }
 }
 
+sub get_object_type {
+  debugmsg(3, "get_object_type", @_);
+  my $object_name = shift;
+  my $source = shift || 'ALL_OBJECTS';
+
+  my $sqlstr = q{};
+  my @data ;
+  if (uc($source) eq 'ALL_OBJECTS'){
+    $sqlstr = q{SELECT OBJECT_TYPE FROM all_objects WHERE OBJECT_NAME = ? AND OWNER= ? };
+    @data = $dbh->selectrow_array($sqlstr, undef, uc($object_name), uc($dbuser));
+  }elsif (uc($source) eq 'USER_OBJECTS' ) {
+    $sqlstr = q{SELECT OBJECT_TYPE FROM USER_OBJECTS WHERE OBJECT_NAME = ?  };
+    @data = $dbh->selectrow_array($sqlstr, undef, uc($object_name));
+  }elsif (uc($source) eq 'DBA_OBJECTS' ){
+    query_err("internal", "get_object_type function doesn't support DBA_OBJECTS as source table!", "SELECT OBJECT_TYPE FROM DBA_OBJECTS.." );
+  }
+  
+  return shift @data
+}
+
 __END__
 
 =head1 NAME
