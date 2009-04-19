@@ -2014,28 +2014,52 @@ sub show {
       query($sqlstr, 'table', {num_rows => $num_rows, op => $op, 
                                op_text => $op_text}, uc($table), uc($dbuser));
     } elsif($1 eq 'ddl') {
-      my $table = $2;
-      my $sqlstr = q{
-          SELECT DBMS_METADATA.GET_DDL('TABLE', ?, ?) FROM dual
-        union all
-          SELECT DBMS_METADATA.GET_DEPENDENT_DDL('INDEX', ?, ?) FROM dual
-        union all
-          SELECT DBMS_METADATA.GET_DEPENDENT_DDL ('COMMENT', ?, ?) FROM dual
-        union all 
-          SELECT DBMS_METADATA.GET_DEPENDENT_DDL('TRIGGER', ?, ?) FROM dual  
-      };
+      my $object_name = $2;
+      my $object_type = get_object_type($object_name);
+      
       my $prev_LongReadLen = $dbh->{LongReadLen};
       $dbh->{LongReadLen} = 16_000;
-      query($sqlstr, 'quiet-list', {num_rows => $num_rows, op => $op, op_text => $op_text}
-        ,uc($table)
-        ,uc($dbuser)
-        ,uc($table)
-        ,uc($dbuser)
-        ,uc($table)
-        ,uc($dbuser)
-        ,uc($table)
-        ,uc($dbuser)
-      );
+      
+      if ( $object_type eq 'TABLE'){
+        my $sqlstr = q{
+            SELECT DBMS_METADATA.GET_DDL('TABLE', ?, ?) FROM dual
+          union all
+            SELECT DBMS_METADATA.GET_DEPENDENT_DDL('INDEX', ?, ?) FROM dual
+          union all
+            SELECT DBMS_METADATA.GET_DEPENDENT_DDL ('COMMENT', ?, ?) FROM dual
+          union all 
+            SELECT DBMS_METADATA.GET_DEPENDENT_DDL('TRIGGER', ?, ?) FROM dual  
+        };
+        query($sqlstr, 'quiet-list', {num_rows => $num_rows, op => $op, op_text => $op_text}
+          ,uc($object_name)
+          ,uc($dbuser)
+          ,uc($object_name)
+          ,uc($dbuser)
+          ,uc($object_name)
+          ,uc($dbuser)
+          ,uc($object_name)
+          ,uc($dbuser)
+        );
+      }elsif (
+          $object_type eq 'SYNONYM' 
+          or $object_type eq 'VIEW'
+          or $object_type eq 'TRIGGER'
+          or $object_type eq 'SEQUENCE'
+          or $object_type eq 'INDEX'
+          
+      ){
+        my $sqlstr = q{
+            SELECT DBMS_METADATA.GET_DDL(?, ?, ?) FROM dual
+        };
+        query($sqlstr, 'quiet-list', {num_rows => $num_rows, op => $op, op_text => $op_text}
+          ,uc($object_type)
+          ,uc($object_name)
+          ,uc($dbuser)
+        );
+      }else{
+        query_err("show dll", "Unsupported object type ($object_name is a $object_type)", $input);
+      }
+      
       $dbh->{LongReadLen} = $prev_LongReadLen;                      
     } else {
       query_err("show", "Unsupported show type", $input);
