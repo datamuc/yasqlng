@@ -2270,7 +2270,14 @@ sub show {
     } elsif($object eq 'synonyms') {
       
       show_all_query(
-        q{select synonym_name "Synonym Name", 'SYNONYM' "Type", owner "Owner" from all_synonyms}
+        q{select 
+            synonym_name "Synonym Name", 
+            'SYNONYM' "Type", 
+            owner "Owner",
+            TABLE_OWNER "Table Owner",
+            TABLE_NAME  "Table Name",
+            DB_LINK "DB Link" 
+          from all_synonyms}
         ,q{ order by synonym_name }
         ,$format
         ,$opts
@@ -2459,7 +2466,13 @@ sub show {
                                op_text => $op_text});
     } elsif($1 eq 'synonyms') {
       my $sqlstr = q{
-        select synonym_name "Synonym Name", 'SYNONYM' "Type", sys.login_user() "Owner"
+        select 
+          synonym_name "Synonym Name", 
+          'SYNONYM' "Type", 
+          sys.login_user() "Owner",
+          TABLE_OWNER "Table Owner",
+          TABLE_NAME  "Table Name",
+          DB_LINK "DB Link"
         from user_synonyms
         order by synonym_name
       };
