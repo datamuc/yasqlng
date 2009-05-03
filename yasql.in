@@ -1972,6 +1972,7 @@ sub show {
           , type "Type"
           , tablett || '(' || pk || ')' "Reference"
           , constraint_name "Constraint"
+          , delete_rule "On delete"
         from (
          select
                  a.owner,
@@ -1980,6 +1981,7 @@ sub show {
                  c.owner || '.' || c.table_name tablett,
                  d.column_name pk,
                  a.constraint_name,
+                 a.delete_rule,
 		 'parent ->' type
          from all_constraints a,
               all_cons_columns b,
@@ -1998,6 +2000,7 @@ sub show {
                  c.owner || '.' || c.table_name tablett,
                  d.column_name pk,
                  c.constraint_name,
+                 c.delete_rule,
 		 'child  <-' as type
          FROM all_constraints a,
               all_cons_columns b,
@@ -2014,28 +2017,52 @@ sub show {
       query($sqlstr, 'table', {num_rows => $num_rows, op => $op, 
                                op_text => $op_text}, uc($table), uc($dbuser));
     } elsif($1 eq 'ddl') {
-      my $table = $2;
-      my $sqlstr = q{
-          SELECT DBMS_METADATA.GET_DDL('TABLE', ?, ?) FROM dual
-        union all
-          SELECT DBMS_METADATA.GET_DEPENDENT_DDL('INDEX', ?, ?) FROM dual
-        union all
-          SELECT DBMS_METADATA.GET_DEPENDENT_DDL ('COMMENT', ?, ?) FROM dual
-        union all 
-          SELECT DBMS_METADATA.GET_DEPENDENT_DDL('TRIGGER', ?, ?) FROM dual  
-      };
+      my $object_name = $2;
+      my $object_type = get_object_type($object_name);
+
       my $prev_LongReadLen = $dbh->{LongReadLen};
       $dbh->{LongReadLen} = 16_000;
-      query($sqlstr, 'quiet-list', {num_rows => $num_rows, op => $op, op_text => $op_text}
-        ,uc($table)
-        ,uc($dbuser)
-        ,uc($table)
-        ,uc($dbuser)
-        ,uc($table)
-        ,uc($dbuser)
-        ,uc($table)
-        ,uc($dbuser)
-      );
+
+      if ( $object_type eq 'TABLE'){
+        my $sqlstr = q{
+            SELECT DBMS_METADATA.GET_DDL('TABLE', ?, ?) FROM dual
+          union all
+            SELECT DBMS_METADATA.GET_DEPENDENT_DDL('INDEX', ?, ?) FROM dual
+          union all
+            SELECT DBMS_METADATA.GET_DEPENDENT_DDL ('COMMENT', ?, ?) FROM dual
+          union all
+            SELECT DBMS_METADATA.GET_DEPENDENT_DDL('TRIGGER', ?, ?) FROM dual  
+        };
+        query($sqlstr, 'quiet-list', {num_rows => $num_rows, op => $op, op_text => $op_text}
+          ,uc($object_name)
+          ,uc($dbuser)
+          ,uc($object_name)
+          ,uc($dbuser)
+          ,uc($object_name)
+          ,uc($dbuser)
+          ,uc($object_name)
+          ,uc($dbuser)
+        );
+      }elsif (
+          $object_type eq 'SYNONYM'
+          or $object_type eq 'VIEW'
+          or $object_type eq 'TRIGGER'
+          or $object_type eq 'SEQUENCE'
+          or $object_type eq 'INDEX'
+
+      ){
+        my $sqlstr = q{
+            SELECT DBMS_METADATA.GET_DDL(?, ?, ?) FROM dual
+        };
+        query($sqlstr, 'quiet-list', {num_rows => $num_rows, op => $op, op_text => $op_text}
+          ,uc($object_type)
+          ,uc($object_name)
+          ,uc($dbuser)
+        );
+      }else{
+        query_err("show dll", "Unsupported object type ($object_name is a $object_type)", $input);
+      }
+
       $dbh->{LongReadLen} = $prev_LongReadLen;                      
     } else {
       query_err("show", "Unsupported show type", $input);
@@ -2246,7 +2273,14 @@ sub show {
     } elsif($object eq 'synonyms') {
       
       show_all_query(
-        q{select synonym_name "Synonym Name", 'SYNONYM' "Type", owner "Owner" from all_synonyms}
+        q{select
+            synonym_name "Synonym Name",
+            'SYNONYM' "Type",
+            owner "Owner",
+            TABLE_OWNER "Table Owner",
+            TABLE_NAME  "Table Name",
+            DB_LINK "DB Link"
+          from all_synonyms}
         ,q{ order by synonym_name }
         ,$format
         ,$opts
@@ -2435,7 +2469,13 @@ sub show {
                                op_text => $op_text});
     } elsif($1 eq 'synonyms') {
       my $sqlstr = q{
-        select synonym_name "Synonym Name", 'SYNONYM' "Type", sys.login_user() "Owner"
+        select
+          synonym_name "Synonym Name",
+          'SYNONYM' "Type",
+          sys.login_user() "Owner",
+          TABLE_OWNER "Table Owner",
+          TABLE_NAME  "Table Name",
+          DB_LINK "DB Link"
         from user_synonyms
         order by synonym_name
       };
@@ -2529,7 +2569,7 @@ sub show {
             'US','Undo segment DDL lock',
             'WL','Being-written redo log instance lock',
             'WS','Write-atomic-log-switch global enqueue lock') "Lock Type"
-        ,CASE 
+        ,CASE
             WHEN l.type = 'TM' THEN (
                SELECT  OBJECT_TYPE || ' : ' || OWNER || '.' || OBJECT_NAME
                FROM ALL_OBJECTS
@@ -3039,15 +3079,25 @@ sub describe {
 sub let_cmd {
   my($input) = @_;
   debugmsg(3, "let_cmd called", @_);
-  my @book_keys = qw/sql_query_in_error auto_complete edit_history fast_describe complete_objects complete_tables extended_complete_list extended_benchmarks column_wildcards complete_columns auto_commit commit_on_exit command_complete_list long_trunc_ok/; 
-   
+  my @bool_keys = qw(
+    sql_query_in_error auto_complete edit_history fast_describe
+    complete_objects complete_tables extended_complete_list
+    extended_benchmarks column_wildcards complete_columns auto_commit
+    commit_on_exit command_complete_list long_trunc_ok
+  );
+
   if ($input =~ /^\s*let\s*(\w+)?\s*/i ){
     my @print_keys =  keys %conf;
     @print_keys = grep(/$1/,@print_keys) if ($1);
     
     foreach my $key ( @print_keys ){
       my $print_conf = $conf{$key};
-      $print_conf = ($conf{$key}) ? 'On' : 'Off' if ( grep(/$key/,@book_keys) ) ; 
+      $print_conf = ($conf{$key}) ? 'On' : 'Off' if ( grep(/$key/,@bool_keys) ) ; 
+
+      if ($key eq 'long_read_len' ){
+        $print_conf = $dbh->{LongReadLen};
+      }
+
       printf("%25s : %1s\n",$key,$print_conf);
     }
   }else{
@@ -3075,6 +3125,7 @@ sub set_cmd {
   }elsif($input =~ /^\s*set\s+(long_read_len|LongReadLen)\s+(\d+)/i){
       debugmsg(2, "long_read_len/LongReadLen set to $2");
       $dbh->{LongReadLen} = $2;
+      $conf{long_read_len} = $2;
   }elsif($input =~ /^\s*set\s+fast_describe\s+(on|off)/i){
       $conf{fast_describe} = (lc($1) eq 'on') ? 1 : 0;
       print "fast_describe is now " . ($conf{fast_describe} ? 'on' : 'off') . "\n";
@@ -4110,6 +4161,26 @@ _EOM_
   } else {
     print $help;
   }
+}
+
+sub get_object_type {
+  debugmsg(3, "get_object_type", @_);
+  my $object_name = shift;
+  my $source = shift || 'ALL_OBJECTS';
+
+  my $sqlstr = q{};
+  my @data ;
+  if (uc($source) eq 'ALL_OBJECTS'){
+    $sqlstr = q{SELECT OBJECT_TYPE FROM all_objects WHERE OBJECT_NAME = ? AND OWNER= ? };
+    @data = $dbh->selectrow_array($sqlstr, undef, uc($object_name), uc($dbuser));
+  }elsif (uc($source) eq 'USER_OBJECTS' ) {
+    $sqlstr = q{SELECT OBJECT_TYPE FROM USER_OBJECTS WHERE OBJECT_NAME = ?  };
+    @data = $dbh->selectrow_array($sqlstr, undef, uc($object_name));
+  }elsif (uc($source) eq 'DBA_OBJECTS' ){
+    query_err("internal", "get_object_type function doesn't support DBA_OBJECTS as source table!", "SELECT OBJECT_TYPE FROM DBA_OBJECTS.." );
+  }
+
+  return shift @data
 }
 
 __END__
