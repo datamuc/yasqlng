@@ -2067,6 +2067,17 @@ sub show {
     } else {
       query_err("show", "Unsupported show type", $input);
     }
+  } elsif($input =~ /^\s*show\s+invalid\s+objects\s*$/) {
+
+    my $sqlstr = q{
+        select
+          object_name "Object Name",
+          object_type "Type",
+          status "Status"
+        from user_objects WHERE status = 'INVALID'
+    };
+    query($sqlstr, 'table', {num_rows => $num_rows, op => $op, op_text => $op_text});
+
   } elsif($input =~ /^\s*show\s+all\s+([a-zA-Z0-9_\$\#]+)\s*([a-zA-Z0-9_\'\$\#\%\s]*)$/) {
     my $object = $1;
     my $rest = $2;
@@ -4047,6 +4058,8 @@ Commands:
                       Shows properties for a particular object
                         string = indexes, constraints, keys, checks, triggers,
                                  query, deps, ddl
+  show invalid objects 
+                      Shows all objects with status 'invalid'
   show processes      Shows logged in users
   show locks          Shows locks
   show [all] waits    Shows [all] waits
