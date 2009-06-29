@@ -67,7 +67,7 @@ Installation:
 
  * gmake [options]
 
-   The following options to configure are used by Makefile:
+   The following options are used by Makefile:
      prefix=PREFIX         install architecture-independent files in PREFIX
                              [/usr/local]
      PERL=		   path to the perl binary
