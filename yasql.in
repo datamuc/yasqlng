@@ -2049,7 +2049,8 @@ sub show {
           or $object_type eq 'TRIGGER'
           or $object_type eq 'SEQUENCE'
           or $object_type eq 'INDEX'
-
+          or $object_type eq 'PROCEDURE'
+          or $object_type eq 'FUNCTION'
       ){
         my $sqlstr = q{
             SELECT DBMS_METADATA.GET_DDL(?, ?, ?) FROM dual
