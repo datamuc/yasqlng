@@ -559,7 +559,7 @@ sub populate_completion_list {
   if($conf{extended_complete_list}) {
     my @queries;
     if($conf{complete_tables}) {
-      push(@queries, 'select table_name from all_tables');
+      push(@queries, 'select table_name x from all_tables union select view_name x from all_views');
     }
     if($conf{complete_columns}) {
       push(@queries, 'select column_name from all_tab_columns');
@@ -581,7 +581,7 @@ sub populate_completion_list {
   } else {
     my @queries;
     if($conf{complete_tables}) {
-      push(@queries, "select 'table-' || table_name from user_tables");
+      push(@queries, "select 'table-' || table_name x from user_tables union select 'table-' || view_name x from user_views");
     }
     if($conf{complete_columns}) {
       push(@queries, "select 'column-' || column_name from user_tab_columns");
