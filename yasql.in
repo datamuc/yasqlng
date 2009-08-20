@@ -3742,7 +3742,7 @@ sub format_output {
     # with '"' quotes, and rows are seperated by '\n' newlines    
 
     print "\r[K" if $op eq '<';
-    print FOUT "\n";
+    #print FOUT "\n";
     
     # check that Text::CSV_XS was included ok, if not output an error
     if($notextcsv) {
