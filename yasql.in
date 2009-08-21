@@ -696,7 +696,7 @@ sub complete_entry_function {
     } elsif($line_buffer =~ /insert.*into(?!.*values)[\s\w\$\#_,]*$/) {
       debugmsg(4, "where ...");
       push(@grep, '^table-');
-    } elsif($line_buffer =~ /^\s*show\s\w*/) {                                                                               
+    } elsif($line_buffer =~ /^\s*show\s\w*/) {
       push(@grep, 'show-');
     } else {
       push(@grep, '');
@@ -2719,11 +2719,24 @@ sub show {
       };
       query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
                                op_text => $op_text});
-    } elsif(($1 eq 'database links') || ($1 eq 'dblinks')) {                                                                 
-      my $sqlstr = q{                                                                                                        
-        select db_link, host, owner from all_db_links                                                                        
-      };                                                                                                                     
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op,                                                             
+    } elsif(($1 eq 'database links') || ($1 eq 'dblinks')) {
+      my $sqlstr = q{
+        select db_link, host, owner from all_db_links
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
+                               op_text => $op_text});
+
+    } elsif($1 eq 'recyclebin') {                                                                 
+      my $sqlstr = q{
+         select
+             original_name "Original Name",
+             object_name "Object Name",
+             type "Object type",
+             droptime "Droptime"
+         from recyclebin
+         order by 4
+      };
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } else {
       query_err("show", "Unsupported show type", $input);
@@ -2731,8 +2744,7 @@ sub show {
   } else {
     query_err("show", "Unsupported show type", $input);
   }
-  
-      
+
 }
 
 sub describe {
