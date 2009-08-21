@@ -1,5 +1,5 @@
 #! /usr/bin/env perl
-# vim: set tabstop=2 smartindent shiftwidth=2 expandtab ai :
+# vim: set smartindent shiftwidth=2 expandtab ai :
 #
 # Name: yasql - Yet Another SQL*Plus replacement
 #
@@ -9,17 +9,17 @@
 #
 # Copyright (C) 2000 Ephibian, Inc.
 # Copyright (C) 2005 iMind.dev, Inc.
-# 
+#
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
 # as published by the Free Software Foundation; either version 2
 # of the License, or (at your option) any later version.
-# 
+#
 # This program is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
@@ -85,7 +85,7 @@ sub setup_sigs {
 }
 setup_sigs();
 
-# install a filter on the __WARN__ handler so that we can get rid of 
+# install a filter on the __WARN__ handler so that we can get rid of
 # DBD::Oracle's stupid ORACLE_HOME warning.  It would warn even if we don't
 # connect using a TNS name, which doesn't require access to the ORACLE_HOME
 $SIG{__WARN__} = sub{
@@ -141,7 +141,7 @@ sub sighandle {
       print STDERR "Attempting to force exit...\n";
       exit();
     }
-    
+
     if($sigintcaught) {
       # the user has alrady hit INT and so we now force an exit
       print STDERR "Caught another SIG$sig\n";
@@ -149,7 +149,7 @@ sub sighandle {
     } else {
       $sigintcaught = 1;
     }
-    
+
     if($running_query) {
       if(defined $cursth) {
         print STDERR "Attempting to cancel query...\n";
@@ -159,7 +159,7 @@ sub sighandle {
       }
     } elsif(!$connected) {
       quit();
-    
+
       if(defined $cursth) {
         print STDERR "Attempting to cancel query...\n";
         debugmsg(1, "canceling statement handle");
@@ -221,7 +221,7 @@ sub init {
   $opt_debug = 1 if !$opt_debug && defined $opt_debug;
 
   $opt_batch = 0 if $opt_notbatch;
-  
+
   $opt_batch = 1 unless defined $opt_batch || -t STDIN;
 
   debugmsg(3, "init called", @_);
@@ -286,7 +286,7 @@ sub init {
   } elsif(-e $sysconf) {
     $config_file = $sysconf;
   }
-  
+
   if($config_file) {
     debugmsg(2, "Reading config: $config_file");
     open(CONFIG, "$config_file");
@@ -312,7 +312,7 @@ sub init {
   if ($conf{server_output} > 1000000) {
     $conf{server_output} = 1000000;
   }
-  
+
   ($conf{history_file}) = glob($conf{history_file});
 
   debugmsg(3,"Conf: [" . Dumper(\%conf) . "]");
@@ -333,12 +333,12 @@ sub init {
     @sqlpath = split(/;/, $ENV{SQLPATH});
   }
 
-  # If the user set the SID on the command line, we'll overwrite the 
+  # If the user set the SID on the command line, we'll overwrite the
   # environment variable so that DBI sees it.
   #print "Using SID $opt_sid\n" if $opt_sid;
   $ENV{ORACLE_SID} = $opt_sid if $opt_sid;
 
-  # output info about the options given  
+  # output info about the options given
   print STDERR "Debugging is on\n" if $opt_debug;
   DBI->trace(1) if $opt_debug > 3;
 
@@ -403,8 +403,8 @@ sub init {
     }
 
     if ($conf{server_output} > 0) {
-	$dbh->func( $conf{server_output}, 'dbms_output_enable' );
-	$set{serveroutput} = 1;
+  $dbh->func( $conf{server_output}, 'dbms_output_enable' );
+  $set{serveroutput} = 1;
     }
 
     # Quit if one or more scripts were given on the command-line
@@ -451,7 +451,7 @@ sub setup_term {
       }
     } else {
       print STDERR "Creating $conf{history_file} to store your command line history\n";
-      open(HISTORY, ">$conf{history_file}") 
+      open(HISTORY, ">$conf{history_file}")
         or wrn("Could not create $conf{history_file}: $!");
       close(HISTORY);
     }
@@ -473,7 +473,7 @@ sub setup_term {
         debugmsg(4,"[term-feature] $_: $attribs->{$_}");
       }
     }
-    
+
   }
 
   if ($term->ReadLine eq 'Term::ReadLine::Stub') {
@@ -489,7 +489,7 @@ sub parse_logon_string {
 
   my($arg) = @_;
   my($ora_session_mode, $username, $password, $connect_string);
-  
+
   # strip off AS SYSDBA / AS SYSOPER first
   if($arg =~ /^(.*)\s+as\s+sys(\w+)\s*$/i) {
     $ora_session_mode = 2 if lc($2) eq 'dba';
@@ -555,7 +555,7 @@ sub populate_completion_list {
   } else {
     print STDERR "Generating auto-complete list...\n";
   }
-  
+
   if($conf{extended_complete_list}) {
     my @queries;
     if($conf{complete_tables}) {
@@ -637,7 +637,7 @@ sub populate_completion_list {
   }
 
   setup_sigs();
-  
+
   if($inline_print) {
     print "\r";
     print "[K";
@@ -716,7 +716,7 @@ sub complete_entry_function {
       push(@grep, '');
     }
     debugmsg(2,"grep: [@grep]");
-    
+
     my $use_lower;
     if($last_char =~ /^[A-Z]$/) {
       $use_lower = 0;
@@ -729,7 +729,7 @@ sub complete_entry_function {
         $item =~ s/^\w*-//;
         eval { #Trap errors
           if($item =~ /^\Q$word\E/i) {
-            push(@completion_possibles, 
+            push(@completion_possibles,
               ($use_lower ? lc($item) : uc($item))
             );
           }
@@ -768,11 +768,11 @@ sub db_connect {
   # Tries to connect to the database, prompting for username and password
   # if not given.  There are several cases that can happen:
   #   connect_string is present:
-  #     ORACLE_HOME has to exist and the driver tries to make a connection to 
+  #     ORACLE_HOME has to exist and the driver tries to make a connection to
   #     given connect_string.
   #   connect_string is not present:
   #     $opt_host is set:
-  #       Connect to $opt_host on $opt_sid. Specify port only if $opt_port is 
+  #       Connect to $opt_host on $opt_sid. Specify port only if $opt_port is
   #       set
   #     $opt_host is not set:
   #       Try to make connection to the default database by not specifying any
@@ -781,7 +781,7 @@ sub db_connect {
   my($dbhandle, $dberr, $dberrstr, $this_prompt_host, $this_prompt_user);
 
   debugmsg(1,"ora_session_mode: [$ora_session_mode] username: [$username] password: [$password] connect_string: [$connect_string]");
-  
+
   # The first thing we're going to check is that the Oracle DBD is available
   # since it's a sorta required element =)
   my @drivers = DBI->available_drivers();
@@ -796,13 +796,13 @@ sub db_connect {
        .join(", ", @drivers) . ".\n");
   }
   #print "drivers: [" . join("|", @drivers) . "]\n";
-  
+
   # Now we can attempt a connection to the database
   my $attributes = {
-    RaiseError => 0, 
-    PrintError => 0, 
-    AutoCommit => $conf{auto_commit}, 
-    LongReadLen => $conf{long_read_len}, 
+    RaiseError => 0,
+    PrintError => 0,
+    AutoCommit => $conf{auto_commit},
+    LongReadLen => $conf{long_read_len},
     LongTruncOk => $conf{long_trunc_ok},
     ora_session_mode => $ora_session_mode
   };
@@ -811,11 +811,11 @@ sub db_connect {
     # the user wants to connect with external authentication
 
     check_oracle_home();
-    
+
     # install alarm signal handle
     $SIG{ALRM} = \&sighandle;
     alarm($conf{connection_timeout});
-  
+
     if(!$opt_batch) {
       print "Attempting connection to local database\n";
     }
@@ -841,11 +841,11 @@ sub db_connect {
     } else {
       $userstring = $connect_string;
     }
-    
+
     # install alarm signal handle
     $SIG{ALRM} = \&sighandle;
     alarm($conf{connection_timeout});
-  
+
     if(!$opt_batch) {
       print "Attempting connection to $userstring\n";
     }
@@ -871,7 +871,7 @@ sub db_connect {
     # install alarm signal handle
     $SIG{ALRM} = \&sighandle;
     alarm($conf{connection_timeout});
-  
+
     print "Attempting connection to $opt_host\n";
     debugmsg(1,"dsn: [$dsn]");
     $dbhandle = DBI->connect("dbi:Oracle:$dsn",$username,$password,
@@ -895,7 +895,7 @@ sub db_connect {
     # install alarm signal handle
     $SIG{ALRM} = \&sighandle;
     alarm($conf{connection_timeout});
-  
+
     print "Attempting connection to local database\n";
     $dbhandle = DBI->connect('dbi:Oracle:',$username,$password,$attributes)
       or do {
@@ -939,7 +939,7 @@ sub db_connect {
     print STDERR "auto_commit is " . ($conf{auto_commit} ? "ON" : "OFF")
         . ", commit_on_exit is " . ($conf{commit_on_exit} ? "ON" : "OFF")
         . "\n" unless $opt_batch;
-  } elsif( ($dberr eq '1017' || $dberr eq '1005') 
+  } elsif( ($dberr eq '1017' || $dberr eq '1005')
       && ++$num_connects < $conf{max_connection_attempts}) {
     $dberrstr =~ s/ \(DBD ERROR: OCISessionBegin\).*//;
     print "Error: $dberrstr\n\n";
@@ -952,7 +952,7 @@ sub db_connect {
     wrn("Could not connect to database: $dberrstr [$dberr]");
     return(0);
   }
-  
+
   # set the NLS_DATE_FORMAT
   if($conf{nls_date_format}) {
     debugmsg(2, "setting NLS_DATE_FORMAT to $conf{nls_date_format}");
@@ -961,7 +961,7 @@ sub db_connect {
     $dbhandle->do($sqlstr) or query_err('do', $DBI::errstr, $sqlstr);
   }
 
-  $connected = 1;  
+  $connected = 1;
   return($dbhandle);
 }
 
@@ -974,7 +974,7 @@ sub get_prompt {
 
   $prompt_length ||= 5; #just in case normal prompt hasn't been outputted
   debugmsg(2, "prompt_length: [$prompt_length]");
-  
+
   if($prompt_string) {
     my $temp_prompt = sprintf('%' . $prompt_length . 's', $prompt_string . '> ');
     return($temp_prompt);
@@ -983,12 +983,12 @@ sub get_prompt {
     my $temp_prompt_host = '@' . $prompt{host} if $prompt{host};
     $temp_prompt =~ s/\%H/$temp_prompt_host/g;
     $temp_prompt =~ s/\%U/$prompt{user}/g;
-    
+
     $prompt_length = length($temp_prompt);
     return($temp_prompt);
   }
 }
-  
+
 sub get_up {
   my($ora_session_mode, $username, $password) = @_;
   debugmsg(3, "get_up called", @_);
@@ -1017,7 +1017,7 @@ sub get_up {
       # prompt for the password, and disable echo
       my $orig_redisplay = $attribs->{redisplay_function};
       $attribs->{redisplay_function} = \&shadow_redisplay;
-    
+
       $password = $term->readline('Password: ');
 
       $attribs->{redisplay_function} = $orig_redisplay;
@@ -1036,7 +1036,7 @@ sub get_up {
 sub check_oracle_home {
   # This checks for the ORACLE_HOME environment variable and dies if it's
   # not set
-  lerr("Please set your ORACLE_HOME environment variable!") 
+  lerr("Please set your ORACLE_HOME environment variable!")
     unless $ENV{ORACLE_HOME};
   return(1);
 }
@@ -1152,7 +1152,7 @@ sub process_input {
   if(!$opt_batch && $term->ReadLine eq "Term::ReadLine::Gnu" && $input =~ /[^\s]/ &&
       $input ne $last_history) {
     if (!$opt_batch && $add_to_history) {
-	$term->AddHistory($input);
+  $term->AddHistory($input);
     }
   }
   $last_history = $input;
@@ -1163,7 +1163,7 @@ sub parse_input {
   my($input) = @_;
   debugmsg(3, "parse_input called", @_);
   # this takes input and parses it.  It looks for single quotes (') and double
-  # quotes (") and presents prompts accordingly.  It also looks for query 
+  # quotes (") and presents prompts accordingly.  It also looks for query
   # terminators, such as semicolon (;), forward-slash (/) and back-slash-g (\g).
   # If it finds a query terminator, then it pushes any text onto the query
   # buffer ($qbuffer) and then passes the entire query buffer, as well as the
@@ -1171,7 +1171,7 @@ sub parse_input {
   # also wipes out the qbuffer at this time.
   #
   # It returns a prompt (like 'SQL> ' or '  -> ') if successfull, 0 otherwise
-  
+
   # now we need to check for a terminator, if we're not inquotes
   while( $input =~ m/
                      (                             #
@@ -1186,9 +1186,9 @@ sub parse_input {
                        (?:^|\s+)create\s+          # create
                         |                          #  or
                        (?:^|\s+)function\s+        # function
-                	|                          #  or
+                  |                          #  or
                        (?:^|\s+)package\s+         # package
-                	|                          #  or
+                  |                          #  or
                        (?:^|\s+)package\s+body\s+  # package body
                         |                          #  or
                        (?:^|\s+)procedure\s+       # procedure
@@ -1205,7 +1205,7 @@ sub parse_input {
                      )/gix )
   {
 
-    my($pre, $match, $post) = ($`, $1, $'); 
+    my($pre, $match, $post) = ($`, $1, $');
     # PREMATCH, MATCH, POSTMATCH
     debugmsg(1, "parse: [$pre] [$match] [$post]");
 
@@ -1225,7 +1225,7 @@ sub parse_input {
     {
       # do nothing if we're not in a create statement
     } elsif(($match =~ /declare|begin/ix) ||
-	    ($increate && $match =~ /function|package|package\s+body|procedure|trigger/ix))
+      ($increate && $match =~ /function|package|package\s+body|procedure|trigger/ix))
     {
       $inplsqlblock = 1;
     } elsif($match =~ /^\/\*/) {
@@ -1279,13 +1279,13 @@ sub parse_input {
       } elsif($terminator eq '\S') {
         $format = 'csv_no_header';
       } elsif($terminator eq '\i') {
-	$format = 'sql';
+  $format = 'sql';
       }
       $num_rows ||= 0;
 
       debugmsg(4,"fbuffer: [$fbuffer]\n");
 
-      # if there is nothing in the buffer, then we assume that the user just 
+      # if there is nothing in the buffer, then we assume that the user just
       # wants to reexecute the last query, which we have saved in $last_qbuffer
       my($use_buffer, $copy_buffer);
       if($qbuffer) {
@@ -1310,9 +1310,9 @@ sub parse_input {
           while(($max_lines, @params) = get_csv_file($op, $op_text)) {
             $max_lines_save = $max_lines;
             print statusline($count, $max_lines);
-            
+
             my @res = query( $use_buffer, $format,
-              {num_rows => $num_rows, op => $op, op_text => $op_text, 
+              {num_rows => $num_rows, op => $op, op_text => $op_text,
               result_output => 0}, @params);
 
             debugmsg(3, "res: [@res]");
@@ -1418,10 +1418,10 @@ sub get_csv_file {
   }
 
   my $line = <CSV>;
-  while(defined($line) && $line =~ /^\s*$/) {  
+  while(defined($line) && $line =~ /^\s*$/) {
     $line = <CSV>;
   }
-  
+
   unless($line) {
     close_csv();
     return();
@@ -1458,7 +1458,7 @@ sub connect_cmd {
   }
 
   my($ora_session_mode, $username, $password, $connect_string) = parse_logon_string($arg);
-  
+
   my $new_dbh = db_connect(0, $ora_session_mode, $username, $password, $connect_string);
   if (not $new_dbh) {
       warn "failed to make new connection as $username to $connect_string: $DBI::errstr\n";
@@ -1547,8 +1547,8 @@ sub exec_cmd {
 sub edit {
   my($filename) = @_;
   debugmsg(3, "edit called", @_);
-  # This writes the current qbuffer to a file then opens up an editor on that 
-  # file... when the editor returns, we read in the file and overwrite the 
+  # This writes the current qbuffer to a file then opens up an editor on that
+  # file... when the editor returns, we read in the file and overwrite the
   # qbuffer with it.  If there is nothing in the qbuffer, and there is
   # something in the last_qbuffer, then we use the last_qbuffer.  If nothing
   # is in either, then we just open the editor with a blank file.
@@ -1672,7 +1672,7 @@ sub edit {
     foreach my $line (@filecontents) {
       # chomp off newlines
       chomp($line);
-      
+
       last if $sigintcaught;
       # now send it in to process_input
       # and don't add lines of the script to command history
@@ -1731,8 +1731,8 @@ sub run_script {
       chomp;
 
       last if $sigintcaught;
-      
-      # now send it in to process_input 
+
+      # now send it in to process_input
       # and don't add lines of the script to command history
       $prompt = process_input($_, '', 0);
     }
@@ -1813,20 +1813,20 @@ sub show_all_query {
   if ( $static_where ) {
     $where = ' where '. $static_where . ' ';
   }
-  
+
   if ( $option eq 'like' ){
     my $sqlstr = $select . $where;
     $sqlstr .= ' and ' if ( $static_where );
     $sqlstr .= $option_key ." like ? " . $order_by;
-    
+
     query($sqlstr , $format, $opts, @values );
   }else{
     my $sqlstr = $select;
     $sqlstr .= $where if ($static_where);
     $sqlstr .= $order_by;
-    
+
     query($sqlstr , $format, $opts );
-  };   
+  };
 
 }
 
@@ -1836,9 +1836,9 @@ sub show {
   # Can 'show thing'.  Possible things:
   #   tables    - outputs all of the tables that the current user owns
   #   sequences - outputs all of the sequences that the current user owns
-  #   
+  #
   # Can also 'show thing on table'.  Possible things:
-  #   constraints - Shows constraints on the 'table', like Check, Primary Key, 
+  #   constraints - Shows constraints on the 'table', like Check, Primary Key,
   #                 Unique, and Foreign Key
   #   indexes     - Shows indexes on the 'table'
   #   triggers    - Shows triggers on the 'table'
@@ -1847,7 +1847,7 @@ sub show {
   $input = lc($input);
 
   # drop trailing whitespaces
-  ($input = $input) =~ s/( +)$//; 
+  ($input = $input) =~ s/( +)$//;
 
   # parse the input to find out what 'thing' has been requested
   if($input =~ /^\s*show\s+([a-zA-Z0-9_\$\#\s]+)\s+(?:on|for)\s+([a-zA-Z0-9_\$\#]+)/) {
@@ -1880,16 +1880,16 @@ sub show {
           order by ai.index_name, aic.column_position
         };
       }
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text}, uc($2), uc($dbuser));
     } elsif($1 eq 'constraints') {
       my $sqlstr = q{
         select constraint_name "Constraint Name",
-          decode(constraint_type, 
-            'C', 'Check', 
-            'P', 'Primary Key', 
-            'R', 'Foreign Key', 
-            'U', 'Unique', 
+          decode(constraint_type,
+            'C', 'Check',
+            'P', 'Primary Key',
+            'R', 'Foreign Key',
+            'U', 'Unique',
             '') "Type",
             search_condition "Search Condition"
         from all_constraints
@@ -1897,19 +1897,19 @@ sub show {
           and owner = ?
         order by constraint_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text}, uc($2), uc($dbuser));
     } elsif($1 eq 'keys') {
       my $sqlstr = q{
-        select ac.constraint_name "Name", 
-               decode(ac.constraint_type, 
+        select ac.constraint_name "Name",
+               decode(ac.constraint_type,
                  'R', 'Foreign Key',
                  'U', 'Unique',
                  'P', 'Primary Key',
                  ac.constraint_type) "Type",
-               ac.table_name "Table Name", 
-               acc.column_name "Column", 
-               r_ac.table_name "Parent Table", 
+               ac.table_name "Table Name",
+               acc.column_name "Column",
+               r_ac.table_name "Parent Table",
                r_acc.column_name "Parent Column"
           from all_constraints ac, all_cons_columns acc,
                all_constraints r_ac, all_cons_columns r_acc
@@ -1923,15 +1923,15 @@ sub show {
            and ac.owner = ?
          order by ac.constraint_name, acc.position
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text}, uc($2), uc($dbuser));
     } elsif($1 eq 'checks') {
       my $sqlstr = q{
-        select ac.constraint_name "Name", 
-               decode(ac.constraint_type, 
+        select ac.constraint_name "Name",
+               decode(ac.constraint_type,
                  'C', 'Check',
                  ac.constraint_type) "Type",
-               ac.table_name "Table Name", 
+               ac.table_name "Table Name",
                ac.search_condition "Search Condition"
           from all_constraints ac
          where ac.table_name = ?
@@ -1939,7 +1939,7 @@ sub show {
            and ac.owner = ?
          order by ac.constraint_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text}, uc($2), uc($dbuser));
     } elsif($1 eq 'triggers') {
       my $sqlstr = q{
@@ -1947,11 +1947,11 @@ sub show {
           trigger_type "Type",
           when_clause "When",
           triggering_event "Event"
-        from all_triggers 
+        from all_triggers
         where table_name = ?
           and owner = ?
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text}, uc($2), uc($dbuser));
     } elsif($1 eq 'query') {
       my $sqlstr = q{
@@ -1975,13 +1975,13 @@ sub show {
       }
       my $prev_LongReadLen = $dbh->{LongReadLen};
       $dbh->{LongReadLen} = 8000;
-      query($sqlstr, 'single_output', {num_rows => $num_rows, op => $op, 
+      query($sqlstr, 'single_output', {num_rows => $num_rows, op => $op,
                                op_text => $op_text}, uc($2), uc($dbuser));
       $dbh->{LongReadLen} = $prev_LongReadLen;
     } elsif($1 eq 'deps' || $1 eq 'dependencies') {
       my $table = $2;
       my $sqlstr = q{
-        select 
+        select
           column_name "Column Name"
           , type "Type"
           , tablett || '(' || pk || ')' "Reference"
@@ -1996,7 +1996,7 @@ sub show {
                  d.column_name pk,
                  a.constraint_name,
                  a.delete_rule,
-		 'parent ->' type
+     'parent ->' type
          from all_constraints a,
               all_cons_columns b,
               all_constraints c,
@@ -2015,7 +2015,7 @@ sub show {
                  d.column_name pk,
                  c.constraint_name,
                  c.delete_rule,
-		 'child  <-' as type
+     'child  <-' as type
          FROM all_constraints a,
               all_cons_columns b,
               all_constraints c,
@@ -2028,7 +2028,7 @@ sub show {
            and owner like ?
          ORDER BY 2,1,3,4
       };
-      query($sqlstr, 'table', {num_rows => $num_rows, op => $op, 
+      query($sqlstr, 'table', {num_rows => $num_rows, op => $op,
                                op_text => $op_text}, uc($table), uc($dbuser));
     } elsif($1 eq 'ddl') {
       my $object_name = $2;
@@ -2045,7 +2045,7 @@ sub show {
           union all
             SELECT DBMS_METADATA.GET_DEPENDENT_DDL ('COMMENT', ?, ?) FROM dual
           union all
-            SELECT DBMS_METADATA.GET_DEPENDENT_DDL('TRIGGER', ?, ?) FROM dual  
+            SELECT DBMS_METADATA.GET_DEPENDENT_DDL('TRIGGER', ?, ?) FROM dual
         };
         query($sqlstr, 'quiet-list', {num_rows => $num_rows, op => $op, op_text => $op_text}
           ,uc($object_name)
@@ -2078,7 +2078,7 @@ sub show {
         query_err("show dll", "Unsupported object type ($object_name is a $object_type)", $input);
       }
 
-      $dbh->{LongReadLen} = $prev_LongReadLen;                      
+      $dbh->{LongReadLen} = $prev_LongReadLen;
     } else {
       query_err("show", "Unsupported show type", $input);
     }
@@ -2103,17 +2103,17 @@ sub show {
       ,op => $op
       ,op_text => $op_text
     };
-    # Workaround for materialized views 
+    # Workaround for materialized views
     if ($object eq 'materialized' and  $2 =~ /views\s*([a-zA-Z0-9_\$\#\%\s]*)/ ){
       $object = 'materialized views';
       $rest = $1;
-    } 
-    
+    }
+
     if ($rest =~ /\s*(\w+)\s+[']?([a-zA-Z0-9_\$\#\%]+)[']?/){
       $option = lc($1);
       $option_value = uc($2);
     }
- 
+
     if($object eq 'tables') {
 
       show_all_query(
@@ -2124,11 +2124,11 @@ sub show {
         ,q{}
         ,$option
         ,q{table_name}
-        ,$option_value 
+        ,$option_value
       );
-          
+
     } elsif($object eq 'views') {
-      
+
       show_all_query(
         q{select view_name "View Name", 'VIEW' "Type", owner "Owner" from all_views }
         ,q{ order by view_name }
@@ -2137,11 +2137,11 @@ sub show {
         ,q{}
         ,$option
         ,q{view_name}
-        ,$option_value 
+        ,$option_value
       );
-      
+
     } elsif($object eq 'objects') {
-      
+
       show_all_query(
         q{select object_name "Object Name", object_type "Type", owner "Owner" from all_objects }
         ,q{ order by object_name }
@@ -2150,11 +2150,11 @@ sub show {
         ,q{}
         ,$option
         ,q{object_name}
-        ,$option_value 
+        ,$option_value
       );
-    
+
     } elsif($object eq 'sequences') {
-      
+
       show_all_query(
         q{select sequence_name "Sequence Name", 'SEQUENCE' "Type", sequence_owner "Owner" from all_sequences }
         ,q{ order by sequence_name }
@@ -2163,11 +2163,11 @@ sub show {
         ,q{}
         ,$option
         ,q{sequence_name}
-        ,$option_value 
+        ,$option_value
       );
-      
+
     } elsif($object eq 'clusters') {
-      
+
       show_all_query(
         q{select cluster_name "Cluster Name", 'CLUSTER' "Type", owner "Owner" from all_clusters}
         ,q{ order by cluster_name }
@@ -2176,11 +2176,11 @@ sub show {
         ,q{}
         ,$option
         ,q{cluster_name}
-        ,$option_value 
+        ,$option_value
       );
 
     } elsif($object eq 'dimensions') {
-      
+
       show_all_query(
         q{select dimension_name "Dimension Name", 'DIMENSION' "Type", owner "Owner" from all_dimensions}
         ,q{ order by dimension_name }
@@ -2189,11 +2189,11 @@ sub show {
         ,q{}
         ,$option
         ,q{dimension_name}
-        ,$option_value 
+        ,$option_value
       );
 
     } elsif($object eq 'functions') {
-      
+
       show_all_query(
         q{select distinct name "Function Name", 'FUNCTION' "Type", owner "Owner" from all_source}
         ,q{ order by name }
@@ -2202,11 +2202,11 @@ sub show {
         ,q{type = 'FUNCTION'}
         ,$option
         ,q{name}
-        ,$option_value 
+        ,$option_value
       );
 
     } elsif($object eq 'procedures') {
-      
+
       show_all_query(
         q{select distinct name "Procedure Name", 'PROCEDURE' "Type", owner "Owner" from all_source}
         ,q{ order by name }
@@ -2215,11 +2215,11 @@ sub show {
         ,q{type = 'PROCEDURE'}
         ,$option
         ,q{name}
-        ,$option_value 
+        ,$option_value
       );
 
     } elsif($object eq 'packages') {
-      
+
       show_all_query(
         q{select distinct name "Package Name", 'PACKAGES' "Type", owner "Owner" from all_source}
         ,q{ order by name }
@@ -2228,11 +2228,11 @@ sub show {
         ,q{type = 'PACKAGE'}
         ,$option
         ,q{name}
-        ,$option_value 
+        ,$option_value
       );
 
     } elsif($object eq 'indexes') {
-      
+
       show_all_query(
         q{select index_name "Index Name", 'INDEXES' "Type", owner "Owner" from all_indexes}
         ,q{ order by index_name }
@@ -2241,11 +2241,11 @@ sub show {
         ,q{}
         ,$option
         ,q{index_name}
-        ,$option_value 
+        ,$option_value
       );
 
     } elsif($object eq 'indextypes') {
-      
+
       show_all_query(
         q{select indextype_name "Indextype Name", 'INDEXTYPE' "Type", owner "Owner" from all_indextypes}
         ,q{ order by indextype_name }
@@ -2254,11 +2254,11 @@ sub show {
         ,q{}
         ,$option
         ,q{indextype_name}
-        ,$option_value 
+        ,$option_value
       );
 
     } elsif($object eq 'libraries') {
-      
+
       show_all_query(
         q{select library_name "library Name", 'LIBRARY' "Type", owner "Owner" from all_libraries}
         ,q{ order by library_name }
@@ -2267,11 +2267,11 @@ sub show {
         ,q{}
         ,$option
         ,q{library_name}
-        ,$option_value 
+        ,$option_value
       );
 
     } elsif($object eq 'materialized views') {
-      
+
       show_all_query(
         q{select mview_name "Materialized View Name", 'MATERIALIZED VIEW' "Type", owner "Owner" from all_mviews}
         ,q{ order by mview_name }
@@ -2280,11 +2280,11 @@ sub show {
         ,q{}
         ,$option
         ,q{mview_name}
-        ,$option_value 
+        ,$option_value
       );
 
     } elsif($object eq 'snapshots') {
-      
+
       show_all_query(
         q{select name "Snapshot Name", 'SNAPSHOT' "Type", owner "Owner" from all_snapshots}
         ,q{ order by name }
@@ -2293,11 +2293,11 @@ sub show {
         ,q{}
         ,$option
         ,q{name}
-        ,$option_value 
+        ,$option_value
       );
 
     } elsif($object eq 'synonyms') {
-      
+
       show_all_query(
         q{select
             synonym_name "Synonym Name",
@@ -2313,12 +2313,12 @@ sub show {
         ,q{}
         ,$option
         ,q{synonym_name}
-        ,$option_value 
+        ,$option_value
       );
 
-      
+
     } elsif($object eq 'triggers') {
-      
+
       show_all_query(
         q{select trigger_name "Trigger Name", 'TRIGGER' "Type", owner "Owner" from all_triggers}
         ,q{ order by trigger_name }
@@ -2327,7 +2327,7 @@ sub show {
         ,q{}
         ,$option
         ,q{trigger_name}
-        ,$option_value 
+        ,$option_value
       );
 
     } elsif($object eq 'waits') {
@@ -2344,24 +2344,24 @@ sub show {
          where vsw.sid = vs.sid
          order by vsw.wait_time desc, vsw.seconds_in_wait desc, vsw.sid
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
-                               
+
     } elsif( $object eq 'constraints' ){
-      
+
       my $sqlstr = q{
-         select 
+         select
           CONSTRAINT_NAME "Constraint Name"
-          ,decode(constraint_type, 
-            'C', 'Check', 
-            'P', 'Primary Key', 
-            'R', 'Foreign Key', 
-            'U', 'Unique', 
+          ,decode(constraint_type,
+            'C', 'Check',
+            'P', 'Primary Key',
+            'R', 'Foreign Key',
+            'U', 'Unique',
             '') "Type"
           ,TABLE_NAME "Table Name"
           ,INDEX_NAME "Index Name"
           ,STATUS  "Status"
-        from all_constraints 
+        from all_constraints
       };
        show_all_query(
           $sqlstr
@@ -2371,9 +2371,9 @@ sub show {
           ,q{}
           ,$option
           ,q{CONSTRAINT_NAME}
-          ,$option_value 
+          ,$option_value
         );
-                 
+
     } else {
       query_err("show", "Unsupported show type", $input);
     }
@@ -2392,7 +2392,7 @@ sub show {
         from user_views
         order by view_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'objects') {
       my $sqlstr = q{
@@ -2400,7 +2400,7 @@ sub show {
         from user_objects
         order by object_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'sequences') {
       my $sqlstr = q{
@@ -2408,7 +2408,7 @@ sub show {
         from user_sequences
         order by sequence_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'clusters') {
       my $sqlstr = q{
@@ -2416,7 +2416,7 @@ sub show {
         from user_clusters
         order by cluster_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'dimensions') {
       my $sqlstr = q{
@@ -2424,7 +2424,7 @@ sub show {
         from user_dimensions
         order by dimension_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'functions') {
       my $sqlstr = q{
@@ -2433,7 +2433,7 @@ sub show {
         where type = 'FUNCTION'
         order by name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'procedures') {
       my $sqlstr = q{
@@ -2442,7 +2442,7 @@ sub show {
         where type = 'PROCEDURE'
         order by name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'packages') {
       my $sqlstr = q{
@@ -2451,7 +2451,7 @@ sub show {
         where type = 'PACKAGE'
         order by name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'indexes') {
       my $sqlstr = q{
@@ -2459,7 +2459,7 @@ sub show {
         from user_indexes
         order by index_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'indextypes') {
       my $sqlstr = q{
@@ -2467,7 +2467,7 @@ sub show {
         from user_indextypes
         order by indextype_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'libraries') {
       my $sqlstr = q{
@@ -2475,7 +2475,7 @@ sub show {
         from user_libraries
         order by library_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'materialized views') {
       my $sqlstr = q{
@@ -2483,7 +2483,7 @@ sub show {
         from user_mviews
         order by mview_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'snapshots') {
       my $sqlstr = q{
@@ -2491,7 +2491,7 @@ sub show {
         from user_snapshots
         order by name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'synonyms') {
       my $sqlstr = q{
@@ -2505,7 +2505,7 @@ sub show {
         from user_synonyms
         order by synonym_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'triggers') {
       my $sqlstr = q{
@@ -2513,22 +2513,22 @@ sub show {
         from user_triggers
         order by trigger_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'processes') {
       my $sqlstr = q{
-        select sid, 
-               vs.username "User", 
-               vs.status "Status", 
-               vs.schemaname "Schema", 
-               vs.osuser || '@' || vs.machine "From", 
+        select sid,
+               vs.username "User",
+               vs.status "Status",
+               vs.schemaname "Schema",
+               vs.osuser || '@' || vs.machine "From",
                to_char(vs.logon_time, 'Mon DD YYYY HH:MI:SS') "Logon Time",
                aa.name "Command"
-          from v$session vs, audit_actions aa 
+          from v$session vs, audit_actions aa
          where vs.command = aa.action
            and username is not null
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'locks') {
       my $sqlstr = q{
@@ -2602,21 +2602,21 @@ sub show {
                where object_id = l.id1
             )
             WHEN l.type = 'TX' AND l.BLOCK = 1 THEN (
-              SELECT 
+              SELECT
                 'Blocked Sessions: ' || max(substr(SYS_CONNECT_BY_PATH(SID, ','),2)) SID
-              FROM (    
+              FROM (
                 SELECT
                   l2.id1,
                   l2.id2,
                   l2.SID,
                   row_number() OVER (Partition by l2.id1 order by l2.id1 ) seq
-                FROM 
-                  v$lock l2 
-                WHERE 
+                FROM
+                  v$lock l2
+                WHERE
                   l2.block = 0
               )
               where id1 = l.id1
-                and id2 = l.id2   
+                and id2 = l.id2
               start with
                 seq=1
               connect by prior
@@ -2626,9 +2626,9 @@ sub show {
               GROUP BY id1
             )
             WHEN l.type = 'TX' AND l.REQUEST > 0 THEN (
-              SELECT 
+              SELECT
                 'Wait for Session: ' || SID
-              FROM V$LOCK l2 
+              FROM V$LOCK l2
               WHERE l.id1 = l2.id1
                 and l.id2 = l2.id2
                 and block = 1
@@ -2636,7 +2636,7 @@ sub show {
             ELSE 'unknown'
          END AS "Locked object / Lock Info"
         ,l.CTIME
-        FROM V$LOCK l 
+        FROM V$LOCK l
         LEFT JOIN V$SESSION s ON l.SID = s.SID
         WHERE l.type <> 'MR' AND s.type <> 'BACKGROUND'
       };
@@ -2659,7 +2659,7 @@ sub show {
            and vs.username is not null
          order by vsw.wait_time desc, vsw.seconds_in_wait desc, vsw.sid
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'plan') {
       # This following query is Copyright (c) Oracle Corporation 1998, 1999. All Rights Reserved.
@@ -2705,7 +2705,7 @@ sub show {
          union all
         select '--------------------------------------------------------------------------------' from dual
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'errors') {
       my $err = $dbh->func( 'plsql_errstr' );
@@ -2719,19 +2719,19 @@ sub show {
         select username, user_id, created
           from all_users
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'user') {
       my $sqlstr = q{
         select user from dual
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif($1 eq 'uid') {
       my $sqlstr = q{
         select uid from dual
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
     } elsif(($1 eq 'database links') || ($1 eq 'dblinks')) {
       my $sqlstr = q{
@@ -2740,7 +2740,7 @@ sub show {
       query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text});
 
-    } elsif($1 eq 'recyclebin') {                                                                 
+    } elsif($1 eq 'recyclebin') {
       my $sqlstr = q{
          select
              original_name "Original Name",
@@ -2764,7 +2764,7 @@ sub show {
 sub describe {
   my($input, $format, $nosynonym, $num_rows, $op, $op_text) = @_;
   debugmsg(3, "describe called", @_);
-  # This describes a table, view, sequence, or synonym  by listing it's 
+  # This describes a table, view, sequence, or synonym  by listing it's
   # columns and their attributes
 
   # convert to lowercase for comparison operations
@@ -2775,7 +2775,7 @@ sub describe {
     wrn("Database connection died");
     db_reconnect();
   }
-    
+
   # parse the query to find the table that was requested to be described
   if($input =~ /^\s*desc\w*\s*([a-zA-Z0-9_\$\#\.\@]+)/) {
     my $object = $1;
@@ -2849,18 +2849,18 @@ sub describe {
           }
         }
 
-      	# open the redirection file
-      	if($op && $op eq '>' || $op eq '>>') {
-          	    ($op_text) = glob($op_text);
-          	    debugmsg(3, "Opening file '$op_text' for output redirection using [$op]");
-      	    open(FOUT, $op . $op_text) || do query_err('redirect',"Cannot open file '$op_text' for writing: $!", '');
+        # open the redirection file
+        if($op && $op eq '>' || $op eq '>>') {
+                ($op_text) = glob($op_text);
+                debugmsg(3, "Opening file '$op_text' for output redirection using [$op]");
+            open(FOUT, $op . $op_text) || do query_err('redirect',"Cannot open file '$op_text' for writing: $!", '');
               } elsif($op eq '|') {
-          	    debugmsg(3, "Opening pipe to '$op_text' for output redirection");
-      	    open(FOUT, $op . $op_text) || do query_err('pipe',"Cannot open pipe '$op_text': $!", '');
-      	} else {
-      	    open(FOUT, ">&STDOUT");
-      	}
-        
+                debugmsg(3, "Opening pipe to '$op_text' for output redirection");
+            open(FOUT, $op . $op_text) || do query_err('pipe',"Cannot open pipe '$op_text': $!", '');
+        } else {
+            open(FOUT, ">&STDOUT");
+        }
+
         if($opt_headers) {
           # Print headers
           print FOUT "\n";
@@ -2886,7 +2886,7 @@ sub describe {
         }
         print FOUT "\n";
 
-	close(FOUT);
+  close(FOUT);
 
         return();
       }
@@ -2905,13 +2905,13 @@ sub describe {
     @ret = $dbh->selectrow_array(
       "select $all_object_cols from all_objects where object_name = ? "
         ."and owner = ?"
-        .($nosynonym ? " and object_type != 'SYNONYM'" : ""), 
+        .($nosynonym ? " and object_type != 'SYNONYM'" : ""),
         undef, uc($object), uc($schema)
     ) or
     @ret = $dbh->selectrow_array(
       "select $all_object_cols from all_objects where object_name = ? "
-        ."and owner = 'PUBLIC'" 
-        .($nosynonym ? " and object_type != 'SYNONYM'" : ""), 
+        ."and owner = 'PUBLIC'"
+        .($nosynonym ? " and object_type != 'SYNONYM'" : ""),
         undef, uc($object)
     );
 
@@ -2932,7 +2932,7 @@ sub describe {
           ."constraint_name = ?",
         undef, uc($object)
       );
-      
+
       @ret = @temp_ret if @temp_ret;
     }
 
@@ -2947,26 +2947,26 @@ sub describe {
         .'where synonym_name = ? and owner = ?',
         undef, uc($ret[2]), uc($ret[1])
       );
-      
+
       describe("desc $table_owner.$table_name", $format, 1);
     } elsif($type eq 'SEQUENCE') {
       my $sqlstr = q{
-        select sequence_name "Name", 
-          min_value "Min", 
-          max_value "Max", 
-          increment_by "Inc", 
-          cycle_flag "Cycle", 
-          order_flag "Order", 
+        select sequence_name "Name",
+          min_value "Min",
+          max_value "Max",
+          increment_by "Inc",
+          cycle_flag "Cycle",
+          order_flag "Order",
           last_number "Last"
         from all_sequences
         where sequence_name = ?
           and sequence_owner = ?
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text}, uc($ret[2]), uc($ret[1]));
     } elsif($type eq 'TABLE' || $type eq 'VIEW' || $type eq 'TABLE PARTITION') {
       my $sqlstr = q{
-        select column_name "Name",   
+        select column_name "Name",
                decode(nullable,
                  'N','NOT NULL'
                  ) "Null?",
@@ -3003,20 +3003,20 @@ sub describe {
            and owner = ?
          order by column_id
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text}, uc($ret[2]), uc($ret[1]));
     } elsif($type eq 'R') {
       my $sqlstr = q{
-        select ac.constraint_name "Name", 
-               decode(ac.constraint_type, 
+        select ac.constraint_name "Name",
+               decode(ac.constraint_type,
                  'R', 'Foreign Key',
                  'C', 'Check',
                  'U', 'Unique',
                  'P', 'Primary Key',
                  ac.constraint_type) "Type",
-               ac.table_name "Table Name", 
-               acc.column_name "Column Name", 
-               r_ac.table_name "Parent Table", 
+               ac.table_name "Table Name",
+               acc.column_name "Column Name",
+               r_ac.table_name "Parent Table",
                r_acc.column_name "Parent Column",
                ac.delete_rule "Delete Rule"
           from all_constraints ac, all_cons_columns acc,
@@ -3031,20 +3031,20 @@ sub describe {
            and ac.owner = ?
          order by ac.constraint_name, acc.position
       };
-      query($sqlstr, 'list_aligned', {num_rows => $num_rows, op => $op, 
+      query($sqlstr, 'list_aligned', {num_rows => $num_rows, op => $op,
                                       op_text => $op_text}, uc($ret[1]),
                                       uc($schema));
     } elsif($type eq 'P' || $type eq 'U') {
       my $sqlstr = q{
-        select ac.constraint_name "Name", 
-               decode(ac.constraint_type, 
+        select ac.constraint_name "Name",
+               decode(ac.constraint_type,
                  'R', 'Foreign Key',
                  'C', 'Check',
                  'U', 'Unique',
                  'P', 'Primary Key',
                  ac.constraint_type) "Type",
-               ac.table_name "Table Name", 
-               acc.column_name "Column Name" 
+               ac.table_name "Table Name",
+               acc.column_name "Column Name"
           from all_constraints ac, all_cons_columns acc
          where ac.constraint_name = acc.constraint_name
            and ac.owner = acc.owner
@@ -3052,24 +3052,24 @@ sub describe {
            and ac.owner = ?
          order by ac.constraint_name, acc.position
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text}, uc($ret[1]), uc($schema));
     } elsif($type eq 'C') {
       my $sqlstr = q{
-        select ac.constraint_name "Name", 
-               decode(ac.constraint_type, 
+        select ac.constraint_name "Name",
+               decode(ac.constraint_type,
                  'R', 'Foreign Key',
                  'C', 'Check',
                  'U', 'Unique',
                  'P', 'Primary Key',
                  ac.constraint_type) "Type",
-               ac.table_name "Table Name", 
+               ac.table_name "Table Name",
                ac.search_condition "Search Condition"
           from all_constraints ac
          where ac.constraint_name = ?
          order by ac.constraint_name
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text}, uc($ret[1]));
     } elsif($type eq 'INDEX') {
       my $sqlstr = q{
@@ -3085,7 +3085,7 @@ sub describe {
            and ai.table_owner = ?
          order by aic.column_position
       };
-      query($sqlstr, $format, {num_rows => $num_rows, op => $op, 
+      query($sqlstr, $format, {num_rows => $num_rows, op => $op,
                                op_text => $op_text}, uc($ret[2]), uc($schema));
     } elsif($type eq 'TRIGGER') {
       my $sqlstr = q{
@@ -3099,7 +3099,7 @@ sub describe {
           from all_triggers
          where trigger_name = ?
       };
-      query($sqlstr, 'list_aligned', {num_rows => $num_rows, op => $op, 
+      query($sqlstr, 'list_aligned', {num_rows => $num_rows, op => $op,
                                       op_text => $op_text}, uc($ret[2]));
     } elsif($type eq 'PACKAGE') {
       wrn("Not implemented (yet)");
@@ -3127,10 +3127,10 @@ sub let_cmd {
   if ($input =~ /^\s*let\s*(\w+)?\s*/i ){
     my @print_keys =  keys %conf;
     @print_keys = grep(/$1/,@print_keys) if ($1);
-    
+
     foreach my $key ( @print_keys ){
       my $print_conf = $conf{$key};
-      $print_conf = ($conf{$key}) ? 'On' : 'Off' if ( grep(/$key/,@bool_keys) ) ; 
+      $print_conf = ($conf{$key}) ? 'On' : 'Off' if ( grep(/$key/,@bool_keys) );
 
       if ($key eq 'long_read_len' ){
         $print_conf = $dbh->{LongReadLen};
@@ -3167,10 +3167,10 @@ sub set_cmd {
   }elsif($input =~ /^\s*set\s+fast_describe\s+(on|off)/i){
       $conf{fast_describe} = (lc($1) eq 'on') ? 1 : 0;
       print "fast_describe is now " . ($conf{fast_describe} ? 'on' : 'off') . "\n";
-     
+
   }elsif($input =~ /^\s*set\s+(\w+)\s*/ ){
     print "Can't set option $1\n";
-  }  
+  }
 }
 
 sub query {
@@ -3192,7 +3192,7 @@ sub query {
   # and don't send to the database at all, since they're not really valid SQL.
 
   my ($rows_affected, $success_code);
- 
+
   if($sqlstr =~ /^\s*desc/i) {
     describe($sqlstr, $format, undef, $num_rows, $op, $op_text);
   } elsif($sqlstr =~ /^\s*show/i) {
@@ -3208,7 +3208,7 @@ sub query {
 
     $sqlstr = wildcard_expand($sqlstr) if $conf{column_wildcards};
 
-    # send the query on to the database 
+    # send the query on to the database
     push(@totalbench, get_bench()) if !$conf{extended_benchmarks};
     push(@querybench, get_bench()) if $conf{extended_benchmarks};
     debugmsg(3, "preparing", $sqlstr);
@@ -3218,15 +3218,15 @@ sub query {
       $err =~ s/ \(DBD ERROR\: OCIStmtExecute\/Describe\)//;
 
       if ($err =~ m/DBD ERROR\:/) {
-	my $indicator_offset = $DBI::errstr;
-	$indicator_offset =~ s/(.*)(at\ char\ )(\d+)(\ .*)/$3/;
-	if ($indicator_offset > 0) {
-    	    my $i = 0;
-    	    print $sqlstr, "\n";
-	    for ($i=0;$i<$indicator_offset;++$i) {
-		print " ";
-	    }
-	    print "*\n";
+  my $indicator_offset = $DBI::errstr;
+  $indicator_offset =~ s/(.*)(at\ char\ )(\d+)(\ .*)/$3/;
+  if ($indicator_offset > 0) {
+          my $i = 0;
+          print $sqlstr, "\n";
+      for ($i=0;$i<$indicator_offset;++$i) {
+    print " ";
+      }
+      print "*\n";
         }
       }
 
@@ -3317,7 +3317,7 @@ sub query {
         or finish_query($sth), return();
       push(@formatbench, get_bench()) if $conf{extended_benchmarks};
       push(@totalbench, get_bench()) if !$conf{extended_benchmarks};
-   
+
       finish_query($sth), return() if $sigintcaught; #pseudo sig handle
 
       # output format_affected
@@ -3414,9 +3414,9 @@ sub finish_query {
 sub get_bench {
   debugmsg(3, "get_bench called", @_);
   # returns benchmark info
-  
+
   my($benchmark, $hires);
-  $benchmark = new Benchmark; 
+  $benchmark = new Benchmark;
 
   if($nohires) {
     $hires = time;
@@ -3435,9 +3435,9 @@ sub output_benchmark {
   my($string, $bstart, $hrstart, $bend, $hrend, $string2) = @_;
   debugmsg(3, "output_benchmark called", @_);
   # This just outputs the benchmark info
-  
+
   my $bench = timediff($bend, $bstart);
-  
+
   my $time;
   if($nohires) {
     # the times will be seconds
@@ -3475,7 +3475,7 @@ sub output_benchmark {
     push(@tparts, "$time second" . ($time != 1 && 's'));
     $time = join(", ", @tparts);
   }
-  
+
   if($opt_bench || $conf{extended_benchmarks}) {
     print STDERR "$string\[ $time second" . ($time != 1 && 's')
         . " ] [" . timestr($bench) . " ]$string2";
@@ -3517,12 +3517,12 @@ sub format_output {
       return(0) if $sigintcaught; #pseudo sig handle
     }
 
-    # If we didn't get any rows back, then the query was probably an insert or 
+    # If we didn't get any rows back, then the query was probably an insert or
     # update, so we call format_affected
     if(@$res <= 0 && !$isselect) {
       return($sth->rows(), 'affected');
     }
-    
+
     return(0) if $sigintcaught; #pseudo sig handle
 
     # First go through all the return data to determine column widths
@@ -3547,7 +3547,7 @@ sub format_output {
     debugmsg(4, "fields: [" . Dumper($fields) . "]");
     debugmsg(4, "types: [" . Dumper($types) . "]");
     debugmsg(4, "nullable: [" . Dumper($nullable) . "]");
-    
+
     return(0) if $sigintcaught; #pseudo sig handle
 
     # Extend the column widths if the column name is longer than any of the
@@ -3607,14 +3607,14 @@ sub format_output {
           }
         }
         print FOUT "\n";
-        
+
         for( my $i = 0; $i < @$fields; $i++ ) {
           print FOUT " " if $i > 0;
           print FOUT '-' x $widths[$i];
         }
         print FOUT "\n";
       }
-    
+
       return(0) if $sigintcaught; #pseudo sig handle
 
       # now print the actual data rows
@@ -3634,7 +3634,7 @@ sub format_output {
           }
         }
         print FOUT "\n";
-    
+
         $rows_selected++;
         debugmsg(2,"num_rows hit on output") if $num_rows && $j >= $num_rows-1;
         last if $num_rows && $j >= $num_rows-1;
@@ -3658,7 +3658,7 @@ sub format_output {
             }
           }
           print FOUT "\n";
-    
+
           $rows_selected++;
           debugmsg(2,"num_rows hit on output")
             if $num_rows && $count >= $num_rows-1;
@@ -3669,17 +3669,17 @@ sub format_output {
     }
 
     return($rows_selected, 'selected');
-        
+
   } elsif($format eq 'list' || $format eq 'quiet-list' ) {
     # output in a nice list format, which is where we print each row in turn,
     # with each column on it's own line
     # quiet-list doesn't display *** Row...
     my $quiet = ($format eq 'quiet-list') ? 1 : 0;
     my $fields = $sth->{NAME};
-   
+
     print "\r[K" if $op eq '<';
     print FOUT "\n";
-    
+
     my $count = 0;
     while(my $res = $sth->fetch()) {
       print FOUT "\n**** Row: " . ($count+1) . "\n" unless ($quiet);
@@ -3690,7 +3690,7 @@ sub format_output {
           print FOUT $data . "\n";
         }else{
           print FOUT $fields->[$i] . ": " . $data . "\n";
-        }  
+        }
       }
       $count++;
       last if $num_rows && $count >= $num_rows;
@@ -3699,30 +3699,30 @@ sub format_output {
 
     return(0) if $sigintcaught; #pseudo sig handle
 
-    # If we didn't get any rows back, then the query was probably an insert or 
+    # If we didn't get any rows back, then the query was probably an insert or
     # update, so we call format_affected
     if($count <= 0 && !$isselect) {
       return($sth->rows(), 'affected');
     }
-    
+
     return($count, 'selected');
-    
+
   } elsif($format eq 'list_aligned') {
     # output in a nice list format, which is where we print each row in turn,
     # with each column on it's own line.  The column names are aligned in this
     # one (so that the data all starts on the same column)
-    
+
     my $fields = $sth->{NAME};
 
     print "\r[K" if $op eq '<';
     print FOUT "\n";
-    
+
     my $maxwidth = 0;
     for( my $i = 0; $i < @$fields; $i++ ) {
       my $len = length($fields->[$i]) + 1; # +1 for the colon
       $maxwidth = $len if $len >= $maxwidth;
     }
-    
+
     return(0) if $sigintcaught; #pseudo sig handle
 
     my $count = 0;
@@ -3741,35 +3741,35 @@ sub format_output {
 
     return(0) if $sigintcaught; #pseudo sig handle
 
-    # If we didn't get any rows back, then the query was probably an insert or 
+    # If we didn't get any rows back, then the query was probably an insert or
     # update, so we call format_affected
     if($count <= 0 && !$isselect) {
       return($sth->rows(), 'affected');
     }
-    
+
     return($count, 'selected');
-    
+
   } elsif($format eq 'single_output') {
-    # Outputs a single return column/row without any labeling    
+    # Outputs a single return column/row without any labeling
 
     print FOUT "\n";
 
     my $res = $sth->fetchrow_array();
     print FOUT "$res\n";
-    
+
     my $count = ($res ? 1 : 0);
 
     return(0) if $sigintcaught; #pseudo sig handle
 
     return($count, 'selected');
-    
+
   } elsif($format eq 'csv' || $format eq 'csv_no_header') {
     # output in a comma seperated values format.  fields with a ',' are quoted
-    # with '"' quotes, and rows are seperated by '\n' newlines    
+    # with '"' quotes, and rows are seperated by '\n' newlines
 
     print "\r[K" if $op eq '<';
     #print FOUT "\n";
-    
+
     # check that Text::CSV_XS was included ok, if not output an error
     if($notextcsv) {
       soft_err("You must install Text::CSV_XS from CPAN to use this feature");
@@ -3785,26 +3785,26 @@ sub format_output {
         }
         print FOUT "\n";
       }
-    
+
       my $count = 0;
       while(my $res = $sth->fetch()) {
         $count++;
 
         $csv->combine(@$res);
         print FOUT $csv->string() . "\n";
-      
+
         last if $num_rows && $count >= $num_rows;
         return(0) if $sigintcaught; #pseudo sig handle
       }
-      
+
       return(0) if $sigintcaught; #pseudo sig handle
 
-      # If we didn't get any rows back, then the query was probably an insert or 
+      # If we didn't get any rows back, then the query was probably an insert or
       # update, so we call format_affected
       if($count <= 0 && !$isselect) {
         return($sth->rows(), 'affected');
       }
-    
+
       return($count, 'selected');
     }
   } elsif($format eq 'sql') {
@@ -3818,48 +3818,48 @@ sub format_output {
 
     my $count = 0;
     while(my $res = $sth->fetch()) {
-	$count++;
-	die if @$res != @types;
-	print FOUT "insert into TABLE ($cols) values (";
-	foreach (0 .. $#$res) {
-	    my $t = $types[$_];
-	    my $v = $res->[$_];
-	    if (not defined $v) {
-		print FOUT 'null';
-	    } else {
-    if ($t eq 'DOUBLE' or $t eq 'DOUBLE PRECISION' or 
+  $count++;
+  die if @$res != @types;
+  print FOUT "insert into TABLE ($cols) values (";
+  foreach (0 .. $#$res) {
+      my $t = $types[$_];
+      my $v = $res->[$_];
+      if (not defined $v) {
+    print FOUT 'null';
+      } else {
+    if ($t eq 'DOUBLE' or $t eq 'DOUBLE PRECISION' or
         $t eq 'NUMBER' or $t eq 'DECIMAL') {
-		    die "bad number: $v" if $v !~ /\d/;
-		    print FOUT $v;
-		} elsif ($t eq 'VARCHAR2' or $t eq 'CHAR' or $t eq 'CLOB') {
-		    $v =~ s/['']/''/g;
-		    print FOUT "'$v'";
-		} elsif ($t eq 'DATE') {
-		    print FOUT "'$v'";
-		} else {
-		    warn "don't know how to handle SQL type $t"
-		    unless $warned_unknown_type{$t}++;
-		    print FOUT "(unknown type $t: $v)";
-		}
-	    }
-	    print FOUT ', ' unless $_ eq $#$res;
-	}
-	print FOUT ");\n";
-	last if $num_rows && $count >= $num_rows;
-	return(0) if $sigintcaught; #pseudo sig handle
+        die "bad number: $v" if $v !~ /\d/;
+        print FOUT $v;
+    } elsif ($t eq 'VARCHAR2' or $t eq 'CHAR' or $t eq 'CLOB') {
+        $v =~ s/['']/''/g;
+        print FOUT "'$v'";
+    } elsif ($t eq 'DATE') {
+        print FOUT "'$v'";
+    } else {
+        warn "don't know how to handle SQL type $t"
+        unless $warned_unknown_type{$t}++;
+        print FOUT "(unknown type $t: $v)";
+    }
+      }
+      print FOUT ', ' unless $_ eq $#$res;
+  }
+  print FOUT ");\n";
+  last if $num_rows && $count >= $num_rows;
+  return(0) if $sigintcaught; #pseudo sig handle
     }
     return(0) if $sigintcaught; #pseudo sig handle
 
     # If we didn't get any rows back, then the query was probably an insert or
     # update, so we call format_affected
     if($count <= 0 && !$isselect) {
-	return($sth->rows(), 'affected');
+      return($sth->rows(), 'affected');
     }
     return($count, 'selected');
   } else {
     die("Invalid format: $format");
   }
-}    
+}
 
 sub format_affected {
   my($rows_affected, $success_code) = @_;
@@ -3991,7 +3991,7 @@ sub quit {
   if($force_quit) {
     exit($exitcode);
   }
-  
+
   commit_on_exit();
 
   # disconnect the database
@@ -4051,14 +4051,14 @@ Options:
 
 See the man pages for more help.
 _EOM_
-  
+
   exit($exit);
 }
 
 sub help {
   debugmsg(3, "help called", @_);
   # This just outputs online help
-  
+
   my $help = <<_EOM_;
 
 Commands:
@@ -4070,7 +4070,7 @@ Commands:
                        Open new connection.
                         login = <username>[/<password>][@<connect_string>] | /
   reconnect, \\r       Reconnect to the database
-  desc[ribe] <object> Describe table, view, index, sequence, primary key, 
+  desc[ribe] <object> Describe table, view, index, sequence, primary key,
                         foreign key, constraint or trigger
                         object = [<schema>.]<object>[\@dblink]
   show [all] <string> { like <name> }
@@ -4080,12 +4080,12 @@ Commands:
                                  indexes, indextypes, libraries, snapshots,
                                  materialized views, synonyms, triggers,
                                  constraints
-                        name : use % for wildcard         
+                        name : use % for wildcard
   show <string> on|for <object>
                       Shows properties for a particular object
                         string = indexes, constraints, keys, checks, triggers,
                                  query, deps, ddl
-  show invalid objects 
+  show invalid objects
                       Shows all objects with status 'invalid'
   show processes      Shows logged in users
   show locks          Shows locks
@@ -4126,7 +4126,7 @@ Commands:
                            || [ serverout{put} [on|off] {size <size>} ]
                         ]
   let <search string> Display all configurations
- 
+
 Queries:
   All other input is treated as a query, and is sent straight to the database.
 
@@ -4155,11 +4155,11 @@ Return limit:
     The following will run the query, then run it again with different settings:
       user\@ORCL> select * from table;10
       user\@ORCL> \G50
-  
+
 Redirection:
   You can add a shell like redirection operator after a query to pipe the output
   to or from a file.
-  
+
   Output:
     You can use either '>' or '>>' to output to a file.  '>' will overwrite the
     file and '>>' will append to the end of the file.  The file will be created
@@ -4176,8 +4176,8 @@ Redirection:
     for every line in the file.  Put either '?' or ':n' (n being a number)
     placeholders where you want the data from the CSV file to be interpolated.
     The number of placeholders must match the number of columns in the CSV file.
-    Each query is run as if you had typed it in, so the AutoCommit setting 
-    applies the same.  If there is an error then the process will stop, but no 
+    Each query is run as if you had typed it in, so the AutoCommit setting
+    applies the same.  If there is an error then the process will stop, but no
     rollback or anything will be done.
 
     Examples:
@@ -4193,7 +4193,7 @@ Piping
 
 Please see 'man yasql' or 'perldoc yasql' for more help
 _EOM_
- 
+
   my $ret = open(PAGER, "|$conf{pager}");
   if($ret) {
     print PAGER $help;
@@ -4265,7 +4265,7 @@ Output usage information and quit.
 
 =item -A, --nocomp
 
-Turn off the generation of the auto-completion list at startup.  Use This if 
+Turn off the generation of the auto-completion list at startup.  Use This if
 it takes too long to generate the list with a large database.
 
 =item -b, --bench, --benchmark
@@ -4341,15 +4341,15 @@ database interfacing.  It's main features are:
 
 Allows the same command line style editing as other ReadLine enabled programs
 such as BASH and the Perl Debugger.  You can edit the command line as well as
-browse your command history.  The command 
-history is saved in your home directory in a file called .yasql_history.  You 
+browse your command history.  The command
+history is saved in your home directory in a file called .yasql_history.  You
 can also use tab completion on all table and column names.
 
 =item Alternate output methods
 
 A different style of output suited to each type of need.  There are currently
-table, list and CSV output styles.  Table style outputs in the same manner as 
-SQL*Plus, except the column widths are set based on the width of the data in 
+table, list and CSV output styles.  Table style outputs in the same manner as
+SQL*Plus, except the column widths are set based on the width of the data in
 the column, and not the column length defined in the table schema.  List outputs
 each row on it's own line, column after column for easier viewing of wide return
 results.  CSV outputs the data in Comma Seperated Values format, for easy
@@ -4422,7 +4422,7 @@ work.
 
 =item Unix environment
 
-YASQL was developed under GNU/Linux, and aimed at as many Unix installations as 
+YASQL was developed under GNU/Linux, and aimed at as many Unix installations as
 possible.  Known to be compatible with GNU/Linux, AIX and Sun Solaris.
 Please send me an email (qzy@users.sourceforge.net) if it works for other platforms.
 I'd be especially interested if it worked on Win32.
@@ -4444,19 +4444,19 @@ DBD::Oracle must be installed since this uses DBI for database connections.
 
 =item ORACLE_HOME
 
-The ORACLE_HOME environment variable must be set if you use a connection 
-descriptor to connect so that YASQL can translate the descriptor into 
+The ORACLE_HOME environment variable must be set if you use a connection
+descriptor to connect so that YASQL can translate the descriptor into
 usefull connection information to make the actual connection.
 
 =item ORACLE_SID
 
-The ORACLE_SID environment variable must be set unless you specify one with the 
+The ORACLE_SID environment variable must be set unless you specify one with the
 -s option (see options above).
 
 =item Term::ReadLine
 
-Term::ReadLine must be installed (it is with most Perl installations), but more 
-importantly, installing Term::ReadLine::Gnu from CPAN will greatly enhance the 
+Term::ReadLine must be installed (it is with most Perl installations), but more
+importantly, installing Term::ReadLine::Gnu from CPAN will greatly enhance the
 usability.
 
 =item Time::HiRes
@@ -4479,7 +4479,7 @@ installed.
 
 =head1 CONFIG
 
-YASQL will look for a config file first in ~/.yasqlrc then 
+YASQL will look for a config file first in ~/.yasqlrc then
 /etc/yasql.conf.  The following options are available:
 
 =over 4
@@ -4532,7 +4532,7 @@ Default: 1
 
 =item long_read_len = <num_chars>
 
-Long Read Length.  This is the length of characters to truncate to if 
+Long Read Length.  This is the length of characters to truncate to if
 long_trunc_ok is on
 
 Default: 80
@@ -4585,7 +4585,7 @@ Default: 1
 
 =item extended_benchmarks = [0/1]
 
-Whether or not to include extended benchmarking info after queries.  Will 
+Whether or not to include extended benchmarking info after queries.  Will
 include both execution times and CPU loads for both the query and formatting
 parts of the process.
 
@@ -4661,7 +4661,7 @@ Now it is mostly developed and maintained by Balint Kozman
 =head1 THANKS
 
 Thanks to everyone at Ephibian that helped with testing, and a special thanks
-to Tom Renfro at Ephibian who did a lot of testing and found quite a few 
+to Tom Renfro at Ephibian who did a lot of testing and found quite a few
 doozies.
 Also a lot of thanks goes to the mates at iMind.dev who keep suffering from
 testing new features on them.
@@ -4719,7 +4719,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
 =item show query doesn't work with schemas and db links
 
-=item add save and get buffer commands 
+=item add save and get buffer commands
 
 =item add R[UN] command (/ equivilent)
 
