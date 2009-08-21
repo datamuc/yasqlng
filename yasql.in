@@ -1,5 +1,5 @@
 #! /usr/bin/env perl
-# vim: set tabstop=2 smartindent shiftwidth=2 expandtab :
+# vim: set tabstop=2 smartindent shiftwidth=2 expandtab ai :
 #
 # Name: yasql - Yet Another SQL*Plus replacement
 #
@@ -603,8 +603,20 @@ sub populate_completion_list {
   }
 
   if ($conf{command_complete_list}) {
-    push(@completion_list, "command-create", "command-select", "command-insert", "command-update", "command-delete from", "command-from", "command-execute", "command-show", "command-describe", "command-drop");
-    push(@completion_list, "show-objects", "show-tables", "show-indexes", "show-sequences", "show-views", "show-functions", "show-constraints", "show-keys", "show-checks", "show-triggers", "show-query", "show-dimensions", "show-clusters", "show-procedures", "show-packages", "show-indextypes", "show-libraries", "show-materialized views", "show-snapshots", "show-synonyms", "show-waits", "show-processes", "show-errors", "show-user", "show-users", "show-uid", "show-plan", "show-database links", "show-dblinks");  
+    push(@completion_list, qw{
+      command-create command-select command-insert command-update
+      command-delete from command-from command-execute command-show
+      command-describe command-drop
+    });
+    push(@completion_list, qw{
+      show-objects show-tables show-indexes show-sequences show-views
+      show-functions show-constraints show-keys show-checks show-triggers
+      show-query show-dimensions show-clusters show-procedures show-packages
+      show-indextypes show-libraries show-materialized views show-snapshots
+      show-synonyms show-waits show-processes show-errors show-user show-users
+      show-uid show-plan show-database links show-dblinksshow-recyclebin
+      show-dependencies
+    });
   }
 
   if ($current_table_name) {
@@ -696,6 +708,8 @@ sub complete_entry_function {
     } elsif($line_buffer =~ /insert.*into(?!.*values)[\s\w\$\#_,]*$/) {
       debugmsg(4, "where ...");
       push(@grep, '^table-');
+    } elsif($line_buffer =~ /^\s*show\s+(deps|dependencies)\s+\w+/) {
+      push(@grep, 'table-');
     } elsif($line_buffer =~ /^\s*show\s\w*/) {
       push(@grep, 'show-');
     } else {
@@ -1964,7 +1978,7 @@ sub show {
       query($sqlstr, 'single_output', {num_rows => $num_rows, op => $op, 
                                op_text => $op_text}, uc($2), uc($dbuser));
       $dbh->{LongReadLen} = $prev_LongReadLen;
-    } elsif($1 eq 'deps') {
+    } elsif($1 eq 'deps' || $1 eq 'dependencies') {
       my $table = $2;
       my $sqlstr = q{
         select 
