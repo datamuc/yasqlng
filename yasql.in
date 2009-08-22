@@ -1,5 +1,5 @@
 #! /usr/bin/env perl
-# vim: set smartindent shiftwidth=2 expandtab ai :
+# vim: set ts=8 smartindent shiftwidth=2 expandtab ai :
 #
 # Name: yasql - Yet Another SQL*Plus replacement
 #
@@ -403,8 +403,8 @@ sub init {
     }
 
     if ($conf{server_output} > 0) {
-  $dbh->func( $conf{server_output}, 'dbms_output_enable' );
-  $set{serveroutput} = 1;
+      $dbh->func( $conf{server_output}, 'dbms_output_enable' );
+      $set{serveroutput} = 1;
     }
 
     # Quit if one or more scripts were given on the command-line
@@ -1152,7 +1152,7 @@ sub process_input {
   if(!$opt_batch && $term->ReadLine eq "Term::ReadLine::Gnu" && $input =~ /[^\s]/ &&
       $input ne $last_history) {
     if (!$opt_batch && $add_to_history) {
-  $term->AddHistory($input);
+      $term->AddHistory($input);
     }
   }
   $last_history = $input;
@@ -1186,9 +1186,9 @@ sub parse_input {
                        (?:^|\s+)create\s+          # create
                         |                          #  or
                        (?:^|\s+)function\s+        # function
-                  |                          #  or
+                        |                          #  or
                        (?:^|\s+)package\s+         # package
-                  |                          #  or
+                        |                          #  or
                        (?:^|\s+)package\s+body\s+  # package body
                         |                          #  or
                        (?:^|\s+)procedure\s+       # procedure
@@ -1279,7 +1279,7 @@ sub parse_input {
       } elsif($terminator eq '\S') {
         $format = 'csv_no_header';
       } elsif($terminator eq '\i') {
-  $format = 'sql';
+        $format = 'sql';
       }
       $num_rows ||= 0;
 
@@ -1996,7 +1996,7 @@ sub show {
                  d.column_name pk,
                  a.constraint_name,
                  a.delete_rule,
-     'parent ->' type
+                 'parent ->' type
          from all_constraints a,
               all_cons_columns b,
               all_constraints c,
@@ -2015,7 +2015,7 @@ sub show {
                  d.column_name pk,
                  c.constraint_name,
                  c.delete_rule,
-     'child  <-' as type
+                 'child  <-' as type
          FROM all_constraints a,
               all_cons_columns b,
               all_constraints c,
@@ -2851,14 +2851,14 @@ sub describe {
 
         # open the redirection file
         if($op && $op eq '>' || $op eq '>>') {
-                ($op_text) = glob($op_text);
-                debugmsg(3, "Opening file '$op_text' for output redirection using [$op]");
-            open(FOUT, $op . $op_text) || do query_err('redirect',"Cannot open file '$op_text' for writing: $!", '');
-              } elsif($op eq '|') {
-                debugmsg(3, "Opening pipe to '$op_text' for output redirection");
-            open(FOUT, $op . $op_text) || do query_err('pipe',"Cannot open pipe '$op_text': $!", '');
+          ($op_text) = glob($op_text);
+          debugmsg(3, "Opening file '$op_text' for output redirection using [$op]");
+          open(FOUT, $op . $op_text) || do query_err('redirect',"Cannot open file '$op_text' for writing: $!", '');
+        } elsif($op eq '|') {
+          debugmsg(3, "Opening pipe to '$op_text' for output redirection");
+          open(FOUT, $op . $op_text) || do query_err('pipe',"Cannot open pipe '$op_text': $!", '');
         } else {
-            open(FOUT, ">&STDOUT");
+          open(FOUT, ">&STDOUT");
         }
 
         if($opt_headers) {
@@ -2886,7 +2886,7 @@ sub describe {
         }
         print FOUT "\n";
 
-  close(FOUT);
+        close(FOUT);
 
         return();
       }
@@ -3218,15 +3218,15 @@ sub query {
       $err =~ s/ \(DBD ERROR\: OCIStmtExecute\/Describe\)//;
 
       if ($err =~ m/DBD ERROR\:/) {
-  my $indicator_offset = $DBI::errstr;
-  $indicator_offset =~ s/(.*)(at\ char\ )(\d+)(\ .*)/$3/;
-  if ($indicator_offset > 0) {
+        my $indicator_offset = $DBI::errstr;
+        $indicator_offset =~ s/(.*)(at\ char\ )(\d+)(\ .*)/$3/;
+        if ($indicator_offset > 0) {
           my $i = 0;
           print $sqlstr, "\n";
-      for ($i=0;$i<$indicator_offset;++$i) {
-    print " ";
-      }
-      print "*\n";
+          for ($i=0;$i<$indicator_offset;++$i) {
+            print " ";
+          }
+          print "*\n";
         }
       }
 
@@ -3818,35 +3818,35 @@ sub format_output {
 
     my $count = 0;
     while(my $res = $sth->fetch()) {
-  $count++;
-  die if @$res != @types;
-  print FOUT "insert into TABLE ($cols) values (";
-  foreach (0 .. $#$res) {
-      my $t = $types[$_];
-      my $v = $res->[$_];
-      if (not defined $v) {
-    print FOUT 'null';
-      } else {
-    if ($t eq 'DOUBLE' or $t eq 'DOUBLE PRECISION' or
-        $t eq 'NUMBER' or $t eq 'DECIMAL') {
-        die "bad number: $v" if $v !~ /\d/;
-        print FOUT $v;
-    } elsif ($t eq 'VARCHAR2' or $t eq 'CHAR' or $t eq 'CLOB') {
-        $v =~ s/['']/''/g;
-        print FOUT "'$v'";
-    } elsif ($t eq 'DATE') {
-        print FOUT "'$v'";
-    } else {
-        warn "don't know how to handle SQL type $t"
-        unless $warned_unknown_type{$t}++;
-        print FOUT "(unknown type $t: $v)";
-    }
+      $count++;
+      die if @$res != @types;
+      print FOUT "insert into TABLE ($cols) values (";
+      foreach (0 .. $#$res) {
+        my $t = $types[$_];
+        my $v = $res->[$_];
+        if (not defined $v) {
+          print FOUT 'null';
+        } else {
+          if ($t eq 'DOUBLE' or $t eq 'DOUBLE PRECISION' or
+            $t eq 'NUMBER' or $t eq 'DECIMAL') {
+            die "bad number: $v" if $v !~ /\d/;
+            print FOUT $v;
+          } elsif ($t eq 'VARCHAR2' or $t eq 'CHAR' or $t eq 'CLOB') {
+            $v =~ s/['']/''/g;
+            print FOUT "'$v'";
+          } elsif ($t eq 'DATE') {
+            print FOUT "'$v'";
+          } else {
+            warn "don't know how to handle SQL type $t"
+            unless $warned_unknown_type{$t}++;
+            print FOUT "(unknown type $t: $v)";
+          }
+        }
+        print FOUT ', ' unless $_ eq $#$res;
       }
-      print FOUT ', ' unless $_ eq $#$res;
-  }
-  print FOUT ");\n";
-  last if $num_rows && $count >= $num_rows;
-  return(0) if $sigintcaught; #pseudo sig handle
+      print FOUT ");\n";
+      last if $num_rows && $count >= $num_rows;
+      return(0) if $sigintcaught; #pseudo sig handle
     }
     return(0) if $sigintcaught; #pseudo sig handle
 
