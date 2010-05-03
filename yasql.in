@@ -2861,10 +2861,10 @@ sub describe {
         if($op && $op eq '>' || $op eq '>>') {
           ($op_text) = glob($op_text);
           debugmsg(3, "Opening file '$op_text' for output redirection using [$op]");
-          open(FOUT, $op . $op_text) || do query_err('redirect',"Cannot open file '$op_text' for writing: $!", '');
+          open(FOUT, $op . $op_text) || query_err('redirect',"Cannot open file '$op_text' for writing: $!", '');
         } elsif($op eq '|') {
           debugmsg(3, "Opening pipe to '$op_text' for output redirection");
-          open(FOUT, $op . $op_text) || do query_err('pipe',"Cannot open pipe '$op_text': $!", '');
+          open(FOUT, $op . $op_text) || query_err('pipe',"Cannot open pipe '$op_text': $!", '');
         } else {
           open(FOUT, ">&STDOUT");
         }
