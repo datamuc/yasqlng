@@ -2004,7 +2004,7 @@ sub show {
                  d.column_name pk,
                  a.constraint_name,
                  a.delete_rule,
-                 'parent ->' type
+                 'child  ->' type
          from all_constraints a,
               all_cons_columns b,
               all_constraints c,
@@ -2023,7 +2023,7 @@ sub show {
                  d.column_name pk,
                  c.constraint_name,
                  c.delete_rule,
-                 'child  <-' as type
+                 'parent <-' as type
          FROM all_constraints a,
               all_cons_columns b,
               all_constraints c,
